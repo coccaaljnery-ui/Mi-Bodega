@@ -1,0 +1,39 @@
+MI BODEGA V37 AUDITADA
+
+CORRECCIONES PRINCIPALES
+
+1. NETLIFY / GOOGLE SHEETS
+- Se corrigió la sincronización automática cuando se usa Proxy Netlify.
+- Antes el navegador exigía Token local aunque el proxy no debe usarlo.
+- Ahora autoSync funciona con /api/bodega.
+- Si una sincronización falla, vuelve a intentar automáticamente.
+- En conexión directa con Apps Script se verifica que el snapshot realmente se guardó.
+
+2. CONTEO SEMANAL
+- "Guardar en Google Sheets" ahora guarda realmente la base central.
+
+3. INVENTARIO
+- Evita códigos duplicados.
+- Código queda protegido al editar un producto.
+- Familia es obligatoria.
+- Valida Mínimo y Máximo.
+- Reposición se calcula automáticamente: Máx. - Exist.
+- Los productos agregados/editados se ponen en cola para BASE_PRODUCTOS.
+
+4. HERRAMIENTAS
+- "Restablecer sistema" fue reemplazado por "Limpiar copia local".
+- Limpiar la copia local NO borra Google Sheets.
+- Si existe conexión, vuelve a descargar la base central.
+- Nuevo botón "Sincronizar todo".
+- Nuevo botón "Diagnóstico".
+
+5. ESTABILIDAD
+- Se eliminó un listener duplicado que se agregaba cada vez que se cambiaba de menú.
+- Al recuperar conexión a Internet se intenta sincronizar automáticamente.
+- Al volver a la pestaña también intenta sincronizar pendientes.
+- La búsqueda global ahora marca correctamente Inventario en el menú.
+
+IMPORTANTE
+- Esta V37 conserva las claves b34_* para no perder los datos que ya tienes en V34/V35/V36.
+- Si ya tienes Apps Script V34 CENTRAL funcionando, V37 es compatible.
+- El Code.gs incluido se identifica como V37 AUDITADA, pero las acciones centrales siguen siendo compatibles.

@@ -1,0 +1,66 @@
+MI BODEGA V49 - HISTORIAL PERMANENTE DE CONTEO SEMANAL
+
+REGLA IMPLEMENTADA
+
+SEMANA ACTUAL
+- Sigue funcionando igual.
+- Tiene Responsable, productos, Físico, Diferencia, Estado y Observación.
+
+AL CERRAR SEMANA
+1. El sistema toma una fotografía completa del conteo.
+2. Guarda primero esa fotografía en la PC.
+3. Intenta guardarla en Google Sheets > Historial_Conteo_Semanal.
+4. El historial conserva:
+   - Semana
+   - Responsable
+   - Fecha/hora de cierre
+   - Código
+   - Catálogo
+   - Descripción
+   - Familia
+   - Existencia al momento del cierre
+   - Físico
+   - Diferencia
+   - Estado
+   - Observación
+5. La semana archivada no cambia aunque después cambie el Inventario.
+
+CREAR SIGUIENTE SEMANA
+- Solo se habilita si la semana actual está CERRADA.
+- Antes de crear la siguiente, el sistema verifica el respaldo.
+- Si Google Sheets NO confirma el historial:
+  NO permite crear la siguiente semana.
+- Así el conteo anterior no se pierde.
+
+SI NO HAY INTERNET
+- Puedes cerrar la semana.
+- Queda guardada en la PC como respaldo pendiente.
+- Cuando vuelve Internet intenta sincronizar.
+- No permite crear la siguiente semana hasta confirmar Google Sheets.
+
+REABRIR
+- El cierre anterior permanece en Historial.
+- Si reabres, modificas y vuelves a cerrar, se crea una nueva REVISIÓN.
+- Así nunca se altera un cierre histórico anterior.
+
+VISTAS
+Conteo Semanal ahora tiene:
+- Semana actual
+- Historial
+
+HISTORIAL
+Puedes:
+- Seleccionar una semana anterior.
+- Ver Responsable, fecha de cierre y resumen.
+- Ver todos sus productos.
+- Imprimir.
+- Exportar CSV.
+
+GOOGLE SHEETS
+Se agregan:
+- Historial_Semanas: índice/resumen de cada cierre.
+- Historial_Conteo_Semanal: detalle permanente por producto.
+
+IMPORTANTE
+Actualiza backend_google_sheets/Code.gs y publica una NUEVA VERSIÓN
+de tu Web App. Conserva la misma URL /exec y el mismo Token.

@@ -1,0 +1,23 @@
+MI BODEGA V51 - ORDEN EXACTO DE PLANTILLA EN CONTEO SEMANAL
+
+La columna Código del CSV define el orden exacto.
+
+Los códigos que no estén en Inventario se muestran en la posición donde vienen,
+NO al final.
+
+Plantilla revisada: 46 códigos.
+
+Ejemplos:
+AM66717GM -> AM66811GM -> AM66860GM
+AM66860GM -> AM66861GM -> AM71352C
+AM71352C -> AM71352T -> AM71373C
+AM71373C -> AM71380C -> AM71380T
+
+También conservan este orden:
+- Vista principal del Conteo Semanal.
+- Filtros (orden relativo).
+- Impresión.
+- Historial de Conteo Semanal.
+- Exportar CSV.
+
+La tabla general de Inventario no cambia.

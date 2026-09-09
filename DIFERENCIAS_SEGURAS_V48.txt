@@ -1,0 +1,48 @@
+MI BODEGA V48 - DIFERENCIAS SEGURAS
+
+CORRECCIÓN:
+Las diferencias anteriores que ya desaparecieron y no están en Google Sheets
+NO se pueden reconstruir exactamente desde el inventario actual.
+
+V48 evita que esto vuelva a pasar.
+
+NUEVA REGLA:
+1. En cuanto un conteo físico genera una diferencia:
+   - Se guarda en la PC.
+   - Se envía inmediatamente a Google Sheets > Historial_Diferencias.
+   - Google Sheets confirma el ID guardado.
+
+2. Historial_Diferencias es PERSISTENTE:
+   - Una sincronización general NO la vacía.
+   - Un navegador antiguo NO puede borrarla enviando un historial vacío.
+   - Diferencias se genera desde el historial persistente.
+
+3. ANTES DE IMPORTAR OTRO INVENTARIO:
+   - El sistema revisa si existen diferencias sin respaldo.
+   - Intenta guardarlas y espera confirmación.
+   - Si Google Sheets no confirma, LA IMPORTACIÓN SE CANCELA.
+   - Así no se limpia Inventario Digital antes de proteger los conteos.
+
+4. Si no hay Internet:
+   - La diferencia permanece guardada en la PC como pendiente.
+   - Se reintenta al volver Internet.
+   - No podrás reemplazar el inventario mientras ese respaldo esté pendiente.
+
+5. Diferencias:
+   - Pendientes.
+   - Historial.
+   - La pantalla muestra cuántos registros todavía faltan por respaldar.
+
+6. Google Sheets:
+   - Historial_Diferencias = fuente permanente.
+   - Diferencias = solo registros pendientes, generados desde el historial.
+
+IMPORTANTE:
+Reemplaza Code.gs por el de V48 y publica una NUEVA VERSIÓN.
+Conserva la misma URL /exec y el mismo Token.
+
+SOBRE LAS DIFERENCIAS YA PERDIDAS:
+Si la hoja está vacía y el navegador ya limpió el conteo anterior, V48 no puede
+inventar los valores físicos que se perdieron. La única posibilidad de recuperarlos
+es encontrar una copia anterior del navegador o una versión anterior del archivo
+de Google Sheets.

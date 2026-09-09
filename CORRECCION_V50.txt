@@ -1,0 +1,38 @@
+MI BODEGA V50 CORREGIDA
+
+ERROR CORREGIDO:
+archiveCurrentDigitalDifferences is not defined
+
+CAUSA:
+Al implementar V49, el reemplazo de renderConteo eliminó accidentalmente
+el bloque de funciones de Diferencias que estaba entre Conteo Semanal y
+renderDiferencias.
+
+V50 restaura:
+- digitalCountedFamilies
+- differenceRecordOpen
+- openDifferenceForProduct
+- resolveDifferenceRecord
+- syncDifferenceHistoryFromDigital
+- archiveCurrentDigitalDifferences
+- differenceHistoryRows
+- currentProductForDifference
+- currentCountLinkedToDifference
+- ensureDigitalDifferenceTimestamp
+- digitalDifferenceDateTime
+- digitalDifferenceRows
+
+SE CONSERVA:
+- V48 Diferencias seguras.
+- Historial_Diferencias.
+- Bloqueo de importación si faltan respaldos de Diferencias.
+- V49 Historial permanente de Conteo Semanal.
+- Historial_Semanas.
+- Historial_Conteo_Semanal.
+- Menú fijo en PC.
+- Tabla de Inventario corregida.
+- Diseño responsive Android/PC.
+
+IMPORTANTE:
+Para usar las funciones nuevas de Google Sheets del Historial Semanal,
+mantén Code.gs actualizado y publica una nueva versión de la Web App.

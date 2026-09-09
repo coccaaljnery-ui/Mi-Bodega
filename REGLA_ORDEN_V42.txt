@@ -1,0 +1,31 @@
+MI BODEGA V42 - ORDEN INTERNO
+
+La tabla de Inventario NO cambia.
+
+Sigue mostrando exactamente:
+Acc.
+Código
+Catálogo
+Descripción
+Familia
+Exist.
+Mín.
+Máx.
+Ubicación
+Reposición
+Estado
+
+La única regla nueva es:
+- Al importar un TXT, el sistema memoriza el orden exacto de los productos.
+- Ese orden se usa internamente.
+- NO se muestra ninguna columna de orden.
+- La hoja Inventario en Google Sheets mantiene sus columnas normales.
+- Inventario Digital respeta el orden.
+- Conteo Semanal respeta el orden.
+- Sin Existencia respeta el orden.
+- Impresión por familia respeta el orden.
+- Búsquedas mantienen el orden relativo del inventario.
+- Exportación CSV respeta el orden.
+
+El campo interno importOrder sigue existiendo dentro del snapshot para poder
+recordar el orden, pero nunca se muestra al usuario.

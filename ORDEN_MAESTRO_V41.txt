@@ -1,0 +1,33 @@
+MI BODEGA V41 - ORDEN MAESTRO DE IMPORTACIÓN
+
+NUEVA REGLA:
+
+El orden exacto en que los productos aparecen en el archivo TXT importado
+se convierte en el ORDEN MAESTRO del sistema.
+
+Se aplica en:
+- Inventario.
+- Búsquedas del Inventario.
+- Inventario Digital.
+- Impresión de Inventario Digital por familia.
+- Conteo Semanal cuando usa productos del Inventario.
+- Sin Existencia.
+- Exportación CSV.
+- Códigos Nuevos.
+- Hoja Inventario de Google Sheets.
+
+REGLA DE PRODUCTOS QUE DESAPARECEN:
+Si un código estaba en el inventario anterior y ya no aparece en el nuevo
+reporte, pasa a Existencia 0 / Sin Existencia y queda después de los productos
+del reporte actual, manteniendo el orden histórico relativo entre agotados.
+
+SI VUELVE A APARECER:
+Toma automáticamente la nueva posición que tenga en el nuevo TXT.
+
+PRODUCTOS AGREGADOS MANUALMENTE:
+Se agregan al final del orden maestro hasta la siguiente importación.
+
+GOOGLE SHEETS:
+La hoja Inventario agrega la columna "Orden Importación".
+Para reflejar esta columna, publica una NUEVA VERSIÓN del Code.gs incluido.
+Mantén la misma URL /exec y el mismo Token.

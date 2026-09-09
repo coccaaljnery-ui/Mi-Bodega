@@ -1,0 +1,21 @@
+MI BODEGA V33 FÁBRICA - GOOGLE SHEETS
+
+1. Abre tu Google Sheets.
+2. Ve a Extensiones > Apps Script.
+3. Reemplaza el contenido por backend_google_sheets/Code.gs de esta V33.
+4. Guarda y ejecuta setup().
+5. Ve a Implementar > Gestionar implementaciones.
+6. Edita tu Aplicación web actual.
+7. En Versión elige NUEVA VERSIÓN y pulsa Implementar.
+8. Conserva la misma URL que termina en /exec y el mismo Token.
+9. Abre Mi Bodega V33 FÁBRICA.
+10. Ve a Configuración > Google Sheets.
+11. Pega URL /exec + Token.
+12. Activa Google Sheets y Sincronización automática.
+13. Pulsa Guardar conexión y luego Probar conexión.
+
+IMPORTANTE:
+- La edición V33 no reutiliza la configuración local de versiones anteriores.
+- Tendrás que pegar URL y Token una vez nuevamente.
+- BASE_PRODUCTOS de tu Google Sheets existente NO se borra al usar V33.
+- La plantilla XLSX incluida sí viene completamente vacía para una instalación nueva.

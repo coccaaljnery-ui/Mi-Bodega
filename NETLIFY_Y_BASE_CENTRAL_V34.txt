@@ -1,0 +1,26 @@
+MI BODEGA V34 CENTRAL
+
+NUEVAS HOJAS MAESTRAS
+- BASE_PRODUCTOS
+- BASE_TECNICOS
+- BASE_BODEGUEROS
+
+Técnicos y Bodegueros ya no dependen del navegador. Configuración los guarda en sus hojas maestras y todos los módulos los vuelven a leer desde Google Sheets.
+
+REGLA PARA TODO EL SISTEMA
+Google Sheets es la base central. localStorage es solo una copia temporal para rapidez/offline. Al abrir el sistema conectado, primero descarga el snapshot central y después recarga BASE_TECNICOS y BASE_BODEGUEROS.
+
+NETLIFY (RECOMENDADO)
+1. Actualiza Apps Script con backend_google_sheets/Code.gs y publica NUEVA VERSIÓN.
+2. Sube toda esta carpeta a Netlify (no solamente el HTML).
+3. En Netlify > Site configuration > Environment variables crea:
+   BODEGA_APPS_SCRIPT_URL = tu URL /exec
+   BODEGA_API_TOKEN = tu token de la pestaña Conexion
+4. Vuelve a desplegar.
+5. El sitio .netlify.app detecta automáticamente /api/bodega y se conecta sin guardar URL/token en el navegador.
+
+VENTAJA
+Aunque borres datos/caché/localStorage del navegador o entres desde otra PC/teléfono, al abrir el sitio vuelve a descargar Inventario, Salidas, Conteos, Diferencias, Sin Existencia, Códigos Nuevos, configuración y personal central.
+
+SEGURIDAD
+Con el proxy de Netlify el Token queda como variable del servidor y NO se publica en el HTML.

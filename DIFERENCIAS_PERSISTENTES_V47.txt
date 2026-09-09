@@ -1,0 +1,57 @@
+MI BODEGA V47 - DIFERENCIAS PERSISTENTES
+
+PROBLEMA RESUELTO:
+Antes, al importar un inventario nuevo se limpiaba Inventario Digital.
+Como Diferencias dependía directamente de ese conteo actual, las diferencias
+desaparecían de la pantalla.
+
+NUEVA REGLA:
+Una diferencia detectada se convierte inmediatamente en un registro independiente.
+
+GUARDA:
+- Fecha y hora.
+- Responsable.
+- Familia.
+- Código.
+- Catálogo.
+- Descripción.
+- Existencia al detectar.
+- Físico inicial.
+- Diferencia inicial.
+- Observación.
+- Seguimiento.
+- Fecha de resolución.
+
+AL IMPORTAR UN INVENTARIO NUEVO:
+- El conteo digital actual sí se limpia.
+- Las diferencias NO se borran.
+- Continúan en Diferencias > Pendientes.
+- Se muestra además la Existencia actual para comparar con la existencia
+  que había cuando se encontró el problema.
+
+REVISAR:
+En Diferencias > Pendientes pulsa ↩.
+El sistema abre el producto en Inventario Digital para hacer un conteo nuevo.
+- Si el nuevo físico cuadra con la existencia actual: queda Resuelta.
+- Si sigue diferente: permanece Pendiente.
+
+AJUSTAR:
+Si ya hiciste el nuevo conteo y sigue diferente, puedes ajustar Inventario.
+Al ajustar, la diferencia pasa automáticamente a Resuelta.
+
+HISTORIAL:
+Diferencias tiene:
+- Pendientes
+- Historial
+
+GOOGLE SHEETS:
+- Diferencias = solo pendientes.
+- Historial_Diferencias = todos los registros, pendientes y resueltos.
+
+RECUPERACIÓN DE REGISTROS ANTERIORES:
+Al actualizar Code.gs a V47, si Historial_Diferencias está vacío pero la hoja
+Diferencias todavía contiene registros anteriores, V47 los migra automáticamente.
+
+IMPORTANTE:
+Actualiza Code.gs y publica una NUEVA VERSIÓN de la aplicación web.
+Conserva la misma URL /exec y el mismo Token.

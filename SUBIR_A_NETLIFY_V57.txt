@@ -1,0 +1,35 @@
+MI BODEGA V57 - SUBIR A NETLIFY
+
+ESTRUCTURA LISTA
+- public/                 -> sitio web que ve el usuario
+- netlify/functions/      -> proxy seguro hacia Google Apps Script
+- netlify.toml            -> configuración de Netlify
+- backend_google_sheets/  -> Code.gs para Google Sheets
+
+IMPORTANTE
+El Token NO se guarda en el navegador. Netlify Function usa estas variables:
+- BODEGA_APPS_SCRIPT_URL
+- BODEGA_API_TOKEN
+
+PASOS RECOMENDADOS
+1. Actualiza Google Apps Script con backend_google_sheets/Code.gs.
+2. Publica una Nueva versión de la aplicación web y conserva/copía la URL /exec.
+3. En Netlify crea un proyecto y sube ESTA CARPETA COMPLETA (no solo public).
+   Para funciones, el método más confiable es conectar Git o usar Netlify CLI.
+4. En Netlify abre Project configuration > Environment variables.
+5. Crea:
+   BODEGA_APPS_SCRIPT_URL = tu URL de Apps Script terminada en /exec
+   BODEGA_API_TOKEN       = el Token de la pestaña Conexion
+6. Asegúrate de que las variables estén disponibles para Functions.
+7. Haz un nuevo Deploy después de guardar las variables.
+8. Abre:
+   https://TU-SITIO.netlify.app/api/bodega?action=netlify_health
+   Debe responder con JSON: ok:true, proxy:true, configured:true
+9. Después abre Mi Bodega > Configuración / Diagnóstico y prueba la conexión.
+
+SEGURIDAD
+- No publiques tu Token en app.js, deploy-config.js, GitHub público ni capturas.
+- .env.example solo contiene ejemplos, no secretos reales.
+
+TABLET / CELULAR
+En Inventario, Acc. y Código quedan fijos mientras deslizas horizontalmente.

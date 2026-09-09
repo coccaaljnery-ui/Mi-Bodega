@@ -1,0 +1,36 @@
+MI BODEGA V44 - TABLA CORREGIDA
+
+PROBLEMA CORREGIDO:
+En V42/V43 el HTML de inventoryTable tenía:
+class="table-wrap>
+
+Faltaba la comilla final:
+class="table-wrap">
+
+Eso hacía que el navegador no reconociera correctamente la tabla y juntara
+los encabezados y datos como texto continuo.
+
+V44 corrige:
+- Inventario.
+- Productos que requieren atención en Inicio.
+- Encabezados.
+- Filas.
+- Botón de detalle.
+- Estado.
+- Scroll horizontal en Android/tablet.
+
+La tabla vuelve a mostrar claramente:
+Acc.
+Código
+Catálogo
+Descripción
+Familia
+Exist.
+Mín.
+Máx.
+Ubicación
+Reposición
+Estado
+
+El orden interno del TXT se conserva.
+No se agrega ninguna columna de orden visible.

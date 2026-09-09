@@ -1,0 +1,15 @@
+MI BODEGA V46 - MENÚ FIJO CORREGIDO
+
+PROBLEMA DE V45:
+La aplicación original ya reservaba una columna para el sidebar.
+V45 además añadió margin-left al contenido.
+Eso reservaba el espacio dos veces y comprimía Inicio/Inventario.
+
+V46:
+- En PC el sidebar queda fijo.
+- .app deja de usar las dos columnas originales en PC.
+- El contenido tiene un solo margen equivalente al ancho real del menú.
+- Inicio vuelve a ocupar todo el espacio disponible.
+- Inventario vuelve a tener el ancho normal.
+- La barra superior sigue sticky.
+- En Android/tablet se conserva el menú lateral deslizable.

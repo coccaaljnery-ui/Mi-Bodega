@@ -1,0 +1,30 @@
+MI BODEGA V33 FÁBRICA
+
+Esta edición inicia completamente limpia.
+
+VACÍO AL INICIAR:
+- Inventario
+- Control de Salida
+- Conteo Semanal
+- Diferencias
+- Sin Existencia
+- Inventario Digital
+- Códigos Nuevos
+- Técnicos
+- Bodegueros
+
+NO contiene productos ni personas de ejemplo.
+
+IMPORTANTE:
+Esta edición usa almacenamiento local nuevo (b33_*), por eso NO cargará datos de prueba de versiones anteriores.
+Tendrás que volver a pegar una vez tu URL /exec y Token en Configuración > Google Sheets.
+
+Si vas a usar la misma hoja de Google Sheets:
+1. Actualiza Code.gs con el archivo incluido en V33.
+2. Publica una NUEVA VERSIÓN de tu implementación actual.
+3. Conserva la misma URL /exec y el mismo Token.
+4. En V33 pega URL + Token y pulsa Probar conexión.
+5. Importa tu inventario real.
+
+BASE_PRODUCTOS NO se borra automáticamente de tu Google Sheets existente.
+Eso permite conservar tu catálogo maestro real.

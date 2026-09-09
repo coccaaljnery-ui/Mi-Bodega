@@ -1,0 +1,33 @@
+MI BODEGA V52 - TEXTO COMPLETO EN UNA SOLA LÍNEA
+
+REGLA GLOBAL:
+Código, Catálogo y Descripción se muestran en una sola línea.
+
+NO:
+- No se parten en dos líneas.
+- No usan puntos suspensivos.
+- No esconden parte del texto.
+
+SÍ:
+- Se muestra el texto completo.
+- Si el contenido necesita más ancho, la tabla crece.
+- La tabla permite desplazamiento horizontal suave.
+
+APLICADO EN:
+- Inventario.
+- Control de Salida (Código).
+- Conteo Semanal.
+- Historial de Conteo Semanal.
+- Inventario Digital.
+- Diferencias.
+- Sin Existencia.
+- Códigos Nuevos.
+- Impresiones principales.
+
+EJEMPLO:
+AMEX553112S000 se mantiene completo en una sola línea,
+en lugar de mostrarse como:
+AMEX553112S0
+00
+
+La regla funciona en PC, tablet y Android.
