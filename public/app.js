@@ -102,7 +102,7 @@ function save(){
 }
 function cloudSnapshot(){
  return {
-   version:"V65 TABLA SEMANAL AJUSTADA",
+   version:"V67 CONTEO SEMANAL EN VIVO ESTABLE",
    savedAt:new Date().toISOString(),
    inventory:state.inventory,
    movements:state.movements,
@@ -130,7 +130,13 @@ function applyCloudSnapshot(data){
    if(Array.isArray(data.inventory)){state.inventory=data.inventory;ensureMasterImportOrder();state.inventory=orderedProducts(state.inventory);}
    if(Array.isArray(data.movements))state.movements=data.movements;
    if(Array.isArray(data.counts))state.counts=data.counts;
-   if(data.weeklyCounts&&typeof data.weeklyCounts==="object")state.weeklyCounts=data.weeklyCounts;
+   if(data.weeklyCounts&&typeof data.weeklyCounts==="object"){
+     const localWeek=String(state.weeklyMeta?.label||"");
+     const remoteWeek=String(data.weeklyMeta?.label||"");
+     state.weeklyCounts=(localWeek&&remoteWeek&&localWeek===remoteWeek)
+       ? mergeWeeklyCountsLatest(state.weeklyCounts,data.weeklyCounts)
+       : data.weeklyCounts;
+   }
    if(data.settings&&typeof data.settings==="object"){
      state.settings={
        name:data.settings.name||"Mi Bodega",
@@ -163,6 +169,23 @@ function applyCloudSnapshot(data){
  }finally{
    cloudLoading=false;
  }
+}
+function weeklyRecordTimeMs(rec){
+ const d=parseGTDate(rec?.updatedAt||"");
+ return d?d.getTime():0;
+}
+function mergeWeeklyCountsLatest(localCounts,remoteCounts){
+ const out={};
+ const keys=new Set([...Object.keys(localCounts||{}),...Object.keys(remoteCounts||{})]);
+ keys.forEach(id=>{
+   const a=(localCounts||{})[id],b=(remoteCounts||{})[id];
+   if(a&&b){
+     const am=weeklyRecordTimeMs(a),bm=weeklyRecordTimeMs(b);
+     out[id]=(!am||bm>=am)?{...a,...b}:{...b,...a};
+   }else if(b)out[id]={...b};
+   else if(a)out[id]={...a};
+ });
+ return out;
 }
 function normalizeCloudUrl(url){
  return String(url||"").trim().replace(/\/+$/,"");
@@ -233,7 +256,7 @@ async function cloudJsonp(action,params={}){
  });
 }
 
-const LIVE_POLL_MS=3000;
+const LIVE_POLL_MS=1200;
 const LIVE_DEVICE_KEY="b34_live_device_id";
 const LIVE_CURSOR_KEY="b34_live_cursor";
 const liveDeviceId=localStorage.getItem(LIVE_DEVICE_KEY)||uid();
@@ -249,6 +272,9 @@ const liveState={
 };
 const liveDigitalTimers=new Map();
 const liveDigitalPending=new Set();
+const liveWeeklyTimers=new Map();
+const liveWeeklyPending=new Set();
+const liveWeeklyPatches=new Map();
 let liveRenderPending=false;
 
 function liveRealtimeReady(){
@@ -275,7 +301,7 @@ function updateLiveStatusUI(){
  if(syncing)txt.textContent="En vivo · actualizando";
  else if(ok){
    const secs=Math.max(0,Math.round((Date.now()-liveState.lastOk)/1000));
-   txt.textContent=secs<4?"En vivo":"En vivo · "+secs+" s";
+   txt.textContent=secs<3?"En vivo · rápido":"En vivo · "+secs+" s";
  }else if(liveState.error)txt.textContent="En vivo · reconectando";
  else txt.textContent="En vivo";
 }
@@ -306,6 +332,8 @@ function applyLiveProductStock(s){
  p.stock=Number(s.stock||0);
  p.reorder=Number(s.reorder||Math.max(0,Number(p.max||0)-Number(p.stock||0)));
  p.stockUpdatedAt=s.stockUpdatedAt||new Date().toISOString();
+ // Mantener Sin Existencia actualizado también con eventos en vivo.
+ try{syncStockoutRecordsFromInventory("Actualización en vivo");}catch{}
  return true;
 }
 function applyLiveMovementUpsert(m){
@@ -369,6 +397,10 @@ function applyLiveEvent(ev){
    changed=applyLiveDigitalRecord(payload.record||payload);
    if(changed&&state.page==="digital")refreshDigitalLiveRow((payload.record||payload).productId);
    if(changed&&state.page==="diferencias")safeLiveRender();
+ }else if(ev.type==="weekly_upsert"){
+   const rec=payload.record||payload;
+   changed=applyLiveWeeklyRecord(rec,payload.weekLabel||"");
+   if(changed&&state.page==="conteo")refreshWeeklyLiveRow(rec.productId);
  }else if(ev.type==="movement_upsert"){
    changed=applyLiveMovementUpsert(payload.movement||payload)||changed;
    changed=applyLiveProductStock(payload.product)||changed;
@@ -456,6 +488,82 @@ function queueLiveDigitalUpsert(productId,delay=350){
  },delay);
  liveDigitalTimers.set(productId,timer);
  return true;
+}
+
+
+function applyLiveWeeklyRecord(rec,weekLabel){
+ if(!rec?.productId)return false;
+ if(weekLabel&&String(state.weeklyMeta?.label||"")!==String(weekLabel))return false;
+ if(liveWeeklyPending.has(rec.productId))return false;
+ const local=state.weeklyCounts[rec.productId]||{};
+ const localMs=weeklyRecordTimeMs(local),remoteMs=weeklyRecordTimeMs(rec);
+ if(localMs&&remoteMs&&localMs>remoteMs)return false;
+ state.weeklyCounts[rec.productId]={...local,...rec};
+ return true;
+}
+function refreshWeeklyLiveRow(productId){
+ if(state.page!=="conteo"||weeklyView!=="current")return;
+ const product=[...state.inventory,...weeklyExtraProducts()].find(p=>p.id===productId);
+ if(!product)return;
+ const c=weeklyCountState(productId);
+ const escId=CSS.escape(productId);
+ const physical=$(`[data-weekly-physical="${escId}"]`);
+ const obs=$(`[data-weekly-obs="${escId}"]`);
+ const checkbox=$(`[data-weekly-confirm="${escId}"]`);
+ const row=$(`[data-weekly-row="${escId}"]`);
+ const locked=!!state.weeklyMeta.closed||!!c.confirmed;
+ if(physical&&document.activeElement!==physical){physical.value=c.physical===""?"":c.physical;physical.disabled=locked;}
+ if(obs&&document.activeElement!==obs){obs.value=c.obs||"";obs.disabled=locked;}
+ if(checkbox&&document.activeElement!==checkbox){checkbox.checked=!!c.confirmed;checkbox.disabled=!!state.weeklyMeta.closed;}
+ if(row)row.classList.toggle("weekly-row-confirmed",!!c.confirmed);
+ if(product.weeklyOnly&&row){
+   row.querySelectorAll("[data-weekly-extra-field]").forEach(el=>{if(document.activeElement!==el)el.disabled=locked;});
+ }
+ const diff=weeklyDiff(product,c.physical),st=weeklyStatus(product,c.physical);
+ const diffEl=$(`[data-weekly-diff="${escId}"]`),statusEl=$(`[data-weekly-status="${escId}"]`);
+ if(diffEl)diffEl.textContent=diff===""?"—":`${diff>0?"+":""}${diff}`;
+ if(statusEl){statusEl.textContent=st.text;statusEl.className=`chip ${st.cls}`;}
+}
+function queueLiveWeeklyPatch(productId,patch={},delay=220){
+ if(!liveRealtimeReady()||!state.weeklyMeta.active)return false;
+ const existing=liveWeeklyPatches.get(productId)||{};
+ liveWeeklyPatches.set(productId,{...existing,...patch});
+ clearTimeout(liveWeeklyTimers.get(productId));
+ liveWeeklyPending.add(productId);
+ const timer=setTimeout(async()=>{
+   liveWeeklyTimers.delete(productId);
+   const outgoing=liveWeeklyPatches.get(productId)||{};
+   liveWeeklyPatches.delete(productId);
+   try{
+     const r=await cloudPostAction("live_weekly_patch",{
+       weekLabel:state.weeklyMeta.label||"",
+       productId,
+       patch:outgoing
+     });
+     liveWeeklyPending.delete(productId);
+     if(r.record){
+       state.weeklyCounts[productId]={...(state.weeklyCounts[productId]||{}),...r.record};
+       saveLocal();
+       refreshWeeklyLiveRow(productId);
+     }
+     liveState.lastOk=Date.now();liveState.error="";
+   }catch(err){
+     liveWeeklyPending.delete(productId);
+     liveState.error=String(err?.message||err);
+     console.error("Weekly live sync:",err);
+     toast("Conteo guardado localmente; reintentando sincronización.");
+     saveLocal();
+     setTimeout(()=>queueLiveWeeklyPatch(productId,outgoing,250),2500);
+   }
+ },delay);
+ liveWeeklyTimers.set(productId,timer);
+ return true;
+}
+function persistWeeklyPatch(productId,patch,delay=220){
+ saveLocal();
+ if(liveRealtimeReady())return queueLiveWeeklyPatch(productId,patch,delay);
+ save();
+ return false;
 }
 
 let differenceHistorySyncTimer=null,differenceHistorySyncing=false;
@@ -2768,12 +2876,12 @@ function bindCount(){
      if(raw!==""&&(!/^\d+$/.test(raw)||Number(raw)<0)){toast("El conteo físico debe ser un número entero mayor o igual a 0.");return}
      if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      state.weeklyCounts[productId].physical=raw===""?"":Number(raw);
-     state.weeklyCounts[productId].updatedAt=new Date().toLocaleString("es-GT");
+     state.weeklyCounts[productId].updatedAt=new Date().toISOString();
      const diff=weeklyDiff(product,state.weeklyCounts[productId].physical),st=weeklyStatus(product,state.weeklyCounts[productId].physical);
      const diffEl=$(`[data-weekly-diff="${productId}"]`),statusEl=$(`[data-weekly-status="${productId}"]`);
      if(diffEl)diffEl.textContent=diff===""?"—":`${diff>0?"+":""}${diff}`;
      if(statusEl){statusEl.textContent=st.text;statusEl.className=`chip ${st.cls}`}
-     save();
+     persistWeeklyPatch(productId,{physical:state.weeklyCounts[productId].physical},180);
    };
    input.oninput=sync;input.onchange=sync;
  });
@@ -2802,8 +2910,10 @@ function bindCount(){
        c.confirmedAt=new Date().toISOString();
        c.confirmedBy=state.weeklyMeta.responsible||"";
        c.confirmedStock=Number(product.stock||0);
-       c.updatedAt=new Date().toLocaleString("es-GT");
-       save();
+       c.updatedAt=new Date().toISOString();
+       persistWeeklyPatch(productId,{
+         confirmed:true,confirmedAt:c.confirmedAt,confirmedBy:c.confirmedBy,confirmedStock:c.confirmedStock
+       },80);
        render();
        toast("Fila confirmada y bloqueada como Cuadreado.");
      }else{
@@ -2815,8 +2925,10 @@ function bindCount(){
        c.confirmedAt="";
        c.confirmedBy="";
        c.confirmedStock=null;
-       c.updatedAt=new Date().toLocaleString("es-GT");
-       save();
+       c.updatedAt=new Date().toISOString();
+       persistWeeklyPatch(productId,{
+         confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null
+       },80);
        render();
        toast("Fila desbloqueada.");
      }
@@ -2850,7 +2962,8 @@ function bindCount(){
      if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
      if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      state.weeklyCounts[productId].obs=input.value;
-     state.weeklyCounts[productId].updatedAt=new Date().toLocaleString("es-GT");save();
+     state.weeklyCounts[productId].updatedAt=new Date().toISOString();
+     persistWeeklyPatch(productId,{obs:state.weeklyCounts[productId].obs},260);
    };
  });
 
