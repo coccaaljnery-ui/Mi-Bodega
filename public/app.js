@@ -24,7 +24,7 @@ const state={
  movements:get("b34_movements",[]),
  counts:get("b34_counts",[]),
  weeklyCounts:get("b34_weekly_counts",{}),
- settings:get("b34_settings",{name:"Mi Bodega",dark:false,technicians:[],keepers:[]}),
+ settings:get("b34_settings",{name:"Mi Bodega",dark:false,technicians:[],keepers:[],logoDataUrl:""}),
  weeklyMeta:get("b34_weekly_meta",{active:false,label:"",responsible:"",closed:false,filterFamily:"",dateFrom:"",dateTo:"",productIds:[],extraProducts:[]}),
  weeklyHistoryMeta:get("b34_weekly_history_meta",[]),
  weeklyArchiveQueue:get("b34_weekly_archive_queue",[]),
@@ -35,7 +35,10 @@ const state={
  differenceHistory:get("b34_difference_history",[]),
  pendingBaseProducts:get("b34_pending_base_products",[]),
  baseProductSyncQueue:get("b34_base_product_sync_queue",[]),
- stockoutRecords:get("b34_stockout_records",[])
+ stockoutRecords:get("b34_stockout_records",[]),
+ movementTombstones:get("b34_movement_tombstones",{}),
+ inventoryVersionAt:get("b34_inventory_version_at",""),
+ digitalResetAt:get("b34_digital_reset_at","")
 };
 if(typeof state.weeklyMeta.active!=="boolean")state.weeklyMeta.active=!!(state.weeklyMeta.label&&Object.keys(state.weeklyCounts||{}).length);
 if(!Array.isArray(state.weeklyMeta.productIds)){
@@ -45,12 +48,16 @@ if(typeof state.weeklyMeta.responsible!=="string")state.weeklyMeta.responsible="
 if(!Array.isArray(state.weeklyMeta.extraProducts))state.weeklyMeta.extraProducts=[];
 if(!Array.isArray(state.weeklyHistoryMeta))state.weeklyHistoryMeta=[];
 if(!Array.isArray(state.weeklyArchiveQueue))state.weeklyArchiveQueue=[];
+if(typeof state.settings.logoDataUrl!=="string")state.settings.logoDataUrl="";
 if(typeof state.digitalFilter.responsible!=="string")state.digitalFilter.responsible="";
 if(!Array.isArray(state.differenceHistory))state.differenceHistory=[];
 state.differenceHistory.forEach(r=>{
  if(r&&typeof r.needsSync!=="boolean")r.needsSync=true;
 });
 if(!Array.isArray(state.stockoutRecords))state.stockoutRecords=[];
+if(!state.movementTombstones||typeof state.movementTombstones!=="object")state.movementTombstones={};
+if(typeof state.inventoryVersionAt!=="string")state.inventoryVersionAt="";
+if(typeof state.digitalResetAt!=="string")state.digitalResetAt="";
 ensureMasterImportOrder();
 syncStockoutRecordsFromInventory("Migración");
 localStorage.setItem("b34_stockout_records",JSON.stringify(state.stockoutRecords));
@@ -83,6 +90,9 @@ function saveLocal(){
  localStorage.setItem("b34_pending_base_products",JSON.stringify(state.pendingBaseProducts));
  localStorage.setItem("b34_base_product_sync_queue",JSON.stringify(state.baseProductSyncQueue));
  localStorage.setItem("b34_stockout_records",JSON.stringify(state.stockoutRecords));
+ localStorage.setItem("b34_movement_tombstones",JSON.stringify(state.movementTombstones));
+ localStorage.setItem("b34_inventory_version_at",JSON.stringify(state.inventoryVersionAt||""));
+ localStorage.setItem("b34_digital_reset_at",JSON.stringify(state.digitalResetAt||""));
 }
 function save(){
  saveLocal();
@@ -92,7 +102,7 @@ function save(){
 }
 function cloudSnapshot(){
  return {
-   version:"V57 NETLIFY READY",
+   version:"V65 TABLA SEMANAL AJUSTADA",
    savedAt:new Date().toISOString(),
    inventory:state.inventory,
    movements:state.movements,
@@ -107,7 +117,10 @@ function cloudSnapshot(){
    digitalAdjustments:state.digitalAdjustments,
    differenceHistory:state.differenceHistory,
    pendingBaseProducts:state.pendingBaseProducts,
-   stockoutRecords:state.stockoutRecords
+   stockoutRecords:state.stockoutRecords,
+   movementTombstones:state.movementTombstones,
+   inventoryVersionAt:state.inventoryVersionAt||"",
+   digitalResetAt:state.digitalResetAt||""
  };
 }
 function applyCloudSnapshot(data){
@@ -123,7 +136,8 @@ function applyCloudSnapshot(data){
        name:data.settings.name||"Mi Bodega",
        dark:!!data.settings.dark,
        technicians:Array.isArray(data.settings.technicians)?data.settings.technicians:[],
-       keepers:Array.isArray(data.settings.keepers)?data.settings.keepers:[]
+       keepers:Array.isArray(data.settings.keepers)?data.settings.keepers:[],
+       logoDataUrl:typeof data.settings.logoDataUrl==="string"?data.settings.logoDataUrl:""
      };
    }
    if(data.weeklyMeta&&typeof data.weeklyMeta==="object")state.weeklyMeta=data.weeklyMeta;
@@ -135,6 +149,9 @@ function applyCloudSnapshot(data){
    if(Array.isArray(data.differenceHistory))mergeDifferenceHistoryRemote(data.differenceHistory);
    if(Array.isArray(data.pendingBaseProducts))state.pendingBaseProducts=data.pendingBaseProducts;
    if(Array.isArray(data.stockoutRecords))state.stockoutRecords=data.stockoutRecords;
+   if(data.movementTombstones&&typeof data.movementTombstones==="object")state.movementTombstones=data.movementTombstones;
+   if(typeof data.inventoryVersionAt==="string")state.inventoryVersionAt=data.inventoryVersionAt;
+   if(typeof data.digitalResetAt==="string")state.digitalResetAt=data.digitalResetAt;
 
    if(typeof state.weeklyMeta.active!=="boolean")state.weeklyMeta.active=false;
    if(!Array.isArray(state.weeklyMeta.productIds))state.weeklyMeta.productIds=[];
@@ -215,6 +232,232 @@ async function cloudJsonp(action,params={}){
    document.head.appendChild(script);
  });
 }
+
+const LIVE_POLL_MS=3000;
+const LIVE_DEVICE_KEY="b34_live_device_id";
+const LIVE_CURSOR_KEY="b34_live_cursor";
+const liveDeviceId=localStorage.getItem(LIVE_DEVICE_KEY)||uid();
+localStorage.setItem(LIVE_DEVICE_KEY,liveDeviceId);
+const liveState={
+ cursor:Number(localStorage.getItem(LIVE_CURSOR_KEY)||0)||0,
+ timer:null,
+ polling:false,
+ initialized:false,
+ lastOk:0,
+ lastEventAt:0,
+ error:""
+};
+const liveDigitalTimers=new Map();
+const liveDigitalPending=new Set();
+let liveRenderPending=false;
+
+function liveRealtimeReady(){
+ return !!(cloudConfig.enabled&&cloudReady()&&cloudConfig.proxy);
+}
+function setLiveCursor(v){
+ const n=Number(v||0)||0;
+ if(n>liveState.cursor){
+   liveState.cursor=n;
+   localStorage.setItem(LIVE_CURSOR_KEY,String(n));
+ }
+}
+function updateLiveStatusUI(){
+ const pill=$("#liveStatusPill"),txt=$("#liveStatusText");
+ if(!pill||!txt)return;
+ const show=!!(cloudConfig.enabled&&cloudConfig.proxy);
+ pill.hidden=!show;
+ if(!show)return;
+ const ok=liveRealtimeReady()&&liveState.lastOk&&Date.now()-liveState.lastOk<15000;
+ const syncing=liveState.polling;
+ pill.classList.toggle("ok",!!ok);
+ pill.classList.toggle("syncing",!!syncing);
+ pill.classList.toggle("error",!!liveState.error&&!ok);
+ if(syncing)txt.textContent="En vivo · actualizando";
+ else if(ok){
+   const secs=Math.max(0,Math.round((Date.now()-liveState.lastOk)/1000));
+   txt.textContent=secs<4?"En vivo":"En vivo · "+secs+" s";
+ }else if(liveState.error)txt.textContent="En vivo · reconectando";
+ else txt.textContent="En vivo";
+}
+setInterval(updateLiveStatusUI,1000);
+
+async function cloudPostAction(action,payload={}){
+ if(!liveRealtimeReady())throw new Error("La sincronización en vivo requiere Netlify.");
+ const body={action,token:"",deviceId:liveDeviceId,...payload};
+ const res=await fetch(normalizeCloudUrl(cloudConfig.url),{
+   method:"POST",
+   headers:{"Content-Type":"text/plain;charset=utf-8"},
+   body:JSON.stringify(body),
+   cache:"no-store"
+ });
+ let data={};
+ try{data=await res.json()}catch{}
+ if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar el cambio en vivo.");
+ if(data.seq)setLiveCursor(data.seq);
+ return data;
+}
+function applyLiveProductStock(s){
+ if(!s||!s.code)return false;
+ const p=productByCode(s.code)||state.inventory.find(x=>x.id===s.id);
+ if(!p)return false;
+ const localMs=Date.parse(p.stockUpdatedAt||0)||0;
+ const remoteMs=Date.parse(s.stockUpdatedAt||0)||0;
+ if(remoteMs&&localMs>remoteMs)return false;
+ p.stock=Number(s.stock||0);
+ p.reorder=Number(s.reorder||Math.max(0,Number(p.max||0)-Number(p.stock||0)));
+ p.stockUpdatedAt=s.stockUpdatedAt||new Date().toISOString();
+ return true;
+}
+function applyLiveMovementUpsert(m){
+ if(!m?.id)return false;
+ const tomb=Date.parse(state.movementTombstones?.[m.id]||0)||0;
+ const remote=Date.parse(m.updatedAt||m.createdAt||0)||0;
+ if(tomb&&tomb>=remote)return false;
+ const i=state.movements.findIndex(x=>x.id===m.id);
+ if(i<0){state.movements.push(m);return true;}
+ const local=Date.parse(state.movements[i].updatedAt||state.movements[i].createdAt||0)||0;
+ if(!local||remote>=local){state.movements[i]={...state.movements[i],...m};return true;}
+ return false;
+}
+function applyLiveMovementDelete(id,deletedAt){
+ if(!id)return false;
+ const ts=deletedAt||new Date().toISOString();
+ state.movementTombstones[id]=ts;
+ const before=state.movements.length;
+ state.movements=state.movements.filter(x=>x.id!==id);
+ return state.movements.length!==before;
+}
+function applyLiveDigitalRecord(rec){
+ if(!rec?.productId)return false;
+ if(liveDigitalPending.has(rec.productId))return false;
+ const resetMs=Date.parse(state.digitalResetAt||0)||0;
+ const remoteMs=Date.parse(rec.updatedAt||0)||0;
+ if(resetMs&&remoteMs&&remoteMs<=resetMs)return false;
+ const local=state.digitalCounts[rec.productId]||{};
+ const localMs=Date.parse(local.updatedAt||0)||0;
+ if(localMs&&remoteMs&&localMs>remoteMs)return false;
+ state.digitalCounts[rec.productId]={...local,...rec};
+ return true;
+}
+function refreshDigitalLiveRow(productId){
+ const p=state.inventory.find(x=>x.id===productId);
+ if(!p)return;
+ const c=digitalCountState(productId);
+ const physical=$(`[data-digital-physical="${CSS.escape(productId)}"]`);
+ const obs=$(`[data-digital-obs="${CSS.escape(productId)}"]`);
+ if(physical&&document.activeElement!==physical)physical.value=c.physical===""?"":c.physical;
+ if(obs&&document.activeElement!==obs)obs.value=c.obs||"";
+ const st=digitalStatus(p,c.physical);
+ const status=$(`[data-digital-status="${CSS.escape(productId)}"]`);
+ if(status){status.textContent=st.text;status.className=`chip ${st.cls}`;}
+}
+function safeLiveRender(){
+ const ae=document.activeElement;
+ const editing=ae&&(["INPUT","SELECT","TEXTAREA"].includes(ae.tagName));
+ if(editing){liveRenderPending=true;return;}
+ liveRenderPending=false;
+ render();
+}
+document.addEventListener("focusout",()=>{
+ if(liveRenderPending)setTimeout(()=>{if(!["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName||""))safeLiveRender();},30);
+});
+function applyLiveEvent(ev){
+ if(!ev||!ev.type)return false;
+ let changed=false;
+ const payload=ev.payload||{};
+ if(ev.type==="digital_upsert"){
+   changed=applyLiveDigitalRecord(payload.record||payload);
+   if(changed&&state.page==="digital")refreshDigitalLiveRow((payload.record||payload).productId);
+   if(changed&&state.page==="diferencias")safeLiveRender();
+ }else if(ev.type==="movement_upsert"){
+   changed=applyLiveMovementUpsert(payload.movement||payload)||changed;
+   changed=applyLiveProductStock(payload.product)||changed;
+   if(changed&&["salida","inventario","inicio","sinexist"].includes(state.page))safeLiveRender();
+ }else if(ev.type==="movement_delete"){
+   changed=applyLiveMovementDelete(payload.id,payload.deletedAt)||changed;
+   changed=applyLiveProductStock(payload.product)||changed;
+   if(changed&&["salida","inventario","inicio","sinexist"].includes(state.page))safeLiveRender();
+ }
+ if(changed){
+   liveState.lastEventAt=Date.now();
+   saveLocal();
+ }
+ return changed;
+}
+async function pollLiveEvents(){
+ if(liveState.polling||document.visibilityState==="hidden"||!liveRealtimeReady())return false;
+ liveState.polling=true;updateLiveStatusUI();
+ try{
+   const r=await cloudJsonp("live_events",{after:liveState.cursor,limit:100});
+   if(!r?.ok)throw new Error(r?.error||"No se pudo leer actividad en vivo.");
+   const events=Array.isArray(r.events)?r.events:[];
+   events.forEach(ev=>{applyLiveEvent(ev);setLiveCursor(ev.seq);});
+   if(!events.length&&r.cursor)setLiveCursor(r.cursor);
+   liveState.lastOk=Date.now();liveState.error="";
+   return true;
+ }catch(err){
+   liveState.error=String(err?.message||err);
+   console.warn("Live sync:",err);
+   return false;
+ }finally{
+   liveState.polling=false;updateLiveStatusUI();
+ }
+}
+async function initializeLiveSync(){
+ if(!liveRealtimeReady())return false;
+ try{
+   const r=await cloudJsonp("live_events",{after:-1,limit:1});
+   if(r?.ok){
+     liveState.cursor=Number(r.cursor||0)||0;
+     localStorage.setItem(LIVE_CURSOR_KEY,String(liveState.cursor));
+     liveState.lastOk=Date.now();liveState.error="";liveState.initialized=true;
+     startLivePolling();updateLiveStatusUI();return true;
+   }
+ }catch(err){liveState.error=String(err?.message||err);}
+ updateLiveStatusUI();return false;
+}
+function startLivePolling(){
+ clearInterval(liveState.timer);
+ if(!liveRealtimeReady())return;
+ liveState.timer=setInterval(pollLiveEvents,LIVE_POLL_MS);
+}
+function stopLivePolling(){clearInterval(liveState.timer);liveState.timer=null;}
+function queueLiveDigitalUpsert(productId,delay=350){
+ if(!liveRealtimeReady())return false;
+ clearTimeout(liveDigitalTimers.get(productId));
+ liveDigitalPending.add(productId);
+ const timer=setTimeout(async()=>{
+   liveDigitalTimers.delete(productId);
+   const c=state.digitalCounts[productId];
+   const p=state.inventory.find(x=>x.id===productId);
+   if(!c||!p){liveDigitalPending.delete(productId);return;}
+   try{
+     const r=await cloudPostAction("live_digital_upsert",{
+       record:{
+         productId,
+         code:p.code||"",
+         family:p.family||"",
+         physical:c.physical,
+         obs:c.obs||"",
+         responsible:c.responsible||state.digitalFilter.responsible||"",
+         detectedAt:c.detectedAt||""
+       }
+     });
+     liveDigitalPending.delete(productId);
+     if(r.record){state.digitalCounts[productId]={...state.digitalCounts[productId],...r.record};saveLocal();refreshDigitalLiveRow(productId);}
+     liveState.lastOk=Date.now();liveState.error="";
+   }catch(err){
+     liveDigitalPending.delete(productId);
+     liveState.error=String(err?.message||err);
+     console.error(err);
+     toast("El conteo quedó local; reintentando sincronización en vivo.");
+     save();
+   }
+ },delay);
+ liveDigitalTimers.set(productId,timer);
+ return true;
+}
+
 let differenceHistorySyncTimer=null,differenceHistorySyncing=false;
 
 function differenceRecordCloudParams(rec){
@@ -406,7 +649,7 @@ async function syncFromCloud(silent=false){
      cloudConfig.lastSync=new Date().toLocaleString("es-GT");
      markCloud("ok");
      document.body.classList.toggle("dark",state.settings.dark);
-     $("#brandName").textContent=state.settings.name;
+     applyBranding();
      render();
      if(!silent)toast("Datos descargados desde Google Sheets.");
    }else{
@@ -700,7 +943,7 @@ function buildWeeklyArchiveSnapshot(){
  const items=products.map((p,index)=>{
    const c=weeklyCountState(p.id);
    const physical=c.physical;
-   const expected=Number(p.stock||0);
+   const expected=weeklyExpectedStock(p);
    const difference=physical===""?null:Number(physical)-expected;
    return {
      order:index+1,
@@ -711,6 +954,9 @@ function buildWeeklyArchiveSnapshot(){
      family:p.family||"",
      expected,
      physical:physical===""?"":Number(physical),
+     confirmed:!!c.confirmed,
+     confirmedAt:c.confirmedAt||"",
+     confirmedBy:c.confirmedBy||"",
      difference,
      status:physical===""?"Pendiente":difference===0?"Cuadreado":difference>0?"Sobrante":"Faltante",
      obs:c.obs||"",
@@ -889,12 +1135,13 @@ function weeklyHistoryTable(archive){
    <td>${esc(item.family||"—")}</td>
    <td class="qty">${Number(item.expected||0)}</td>
    <td class="qty">${item.physical===""?"—":Number(item.physical)}</td>
+   <td class="weekly-confirm-history">${item.confirmed?`<span class="weekly-confirmed-mark" title="${esc(item.confirmedAt||"")}">✓</span>`:"—"}</td>
    <td class="qty">${item.difference===null||item.difference===undefined?"—":`${Number(item.difference)>0?"+":""}${Number(item.difference)}`}</td>
    <td><span class="chip ${item.status==="Cuadreado"?"count-balanced":item.status==="Sobrante"?"count-surplus":item.status==="Faltante"?"count-shortage":"pending"}">${esc(item.status||"Pendiente")}</span></td>
    <td>${esc(item.obs||"—")}</td>
  </tr>`).join("");
  return `<div class="table-wrap"><table class="weekly-table weekly-history-table">
-   <thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead>
+   <thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>✓</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead>
    <tbody>${rows}</tbody>
  </table></div>`;
 }
@@ -943,6 +1190,7 @@ function printWeeklyArchive(archive){
    <td>${esc(item.code||"")}</td><td>${esc(item.catalog||"")}</td><td>${esc(item.name||"")}</td>
    <td>${esc(item.family||"")}</td><td>${Number(item.expected||0)}</td>
    <td>${item.physical===""?"":Number(item.physical)}</td>
+   <td>${item.confirmed?"✓":""}</td>
    <td>${item.difference===null||item.difference===undefined?"":`${Number(item.difference)>0?"+":""}${Number(item.difference)}`}</td>
    <td>${esc(item.status||"")}</td><td>${esc(item.obs||"")}</td>
  </tr>`).join("");
@@ -955,16 +1203,16 @@ function printWeeklyArchive(archive){
  table{width:100%;border-collapse:collapse;table-layout:auto}th,td{border:1px solid #777;padding:5px}th{background:#eee}th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3){white-space:nowrap}
  </style></head><body><h1>Historial Conteo Semanal</h1>
  <div class="sub">${esc(archive.label)} · Responsable: ${esc(archive.responsible||"")} · Cerrada: ${esc(new Date(archive.closedAt).toLocaleString("es-GT"))}</div>
- <table><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table>
+ <table><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>✓</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table>
  <script>window.onload=()=>window.print()<\/script></body></html>`);
  w.document.close();
 }
 function exportWeeklyArchiveCSV(archive){
  if(!archive?.items?.length)return toast("No hay datos históricos para exportar.");
- const rows=[["Semana","Responsable","Cerrada","Código","Catálogo","Descripción","Familia","Existencia","Físico","Diferencia","Estado","Observación"],
+ const rows=[["Semana","Responsable","Cerrada","Código","Catálogo","Descripción","Familia","Existencia","Físico","Confirmado","Confirmado en","Confirmado por","Diferencia","Estado","Observación"],
  ...(archive.items||[]).map(i=>[
    archive.label,archive.responsible,new Date(archive.closedAt).toLocaleString("es-GT"),
-   i.code,i.catalog,i.name,i.family,i.expected,i.physical,i.difference,i.status,i.obs
+   i.code,i.catalog,i.name,i.family,i.expected,i.physical,i.confirmed?"Sí":"No",i.confirmedAt||"",i.confirmedBy||"",i.difference,i.status,i.obs
  ])];
  download(`historial_${String(archive.label||"semana").replace(/[^\w-]+/g,"_")}.csv`,
    "\ufeff"+rows.map(r=>r.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\n"),
@@ -972,13 +1220,29 @@ function exportWeeklyArchiveCSV(archive){
 }
 function weeklyCountState(productId){
  const raw=state.weeklyCounts[productId]||{};
- return {physical:raw.physical===0?0:(raw.physical??""),obs:raw.obs||"",updatedAt:raw.updatedAt||""};
+ return {
+   physical:raw.physical===0?0:(raw.physical??""),
+   obs:raw.obs||"",
+   updatedAt:raw.updatedAt||"",
+   confirmed:!!raw.confirmed,
+   confirmedAt:raw.confirmedAt||"",
+   confirmedBy:raw.confirmedBy||"",
+   confirmedStock:Number.isFinite(Number(raw.confirmedStock))?Number(raw.confirmedStock):null
+ };
+}
+function weeklyExpectedStock(product){
+ const raw=state.weeklyCounts[product?.id]||{};
+ if(raw.confirmed&&raw.confirmedStock!==null&&raw.confirmedStock!==undefined&&raw.confirmedStock!==""){
+   const n=Number(raw.confirmedStock);
+   if(Number.isFinite(n))return n;
+ }
+ return Number(product?.stock||0);
 }
 function weeklyDiff(product,physical){
  if(physical===""||physical===null||physical===undefined)return "";
  const n=Number(physical);
  if(Number.isNaN(n))return "";
- return n-(+product.stock||0);
+ return n-weeklyExpectedStock(product);
 }
 function weeklyStatus(product,physical){
  if(physical===""||physical===null||physical===undefined)return {text:"Pendiente",cls:"pending"};
@@ -1088,18 +1352,25 @@ function parseGTDate(v){
  return new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5],+(m[6]||0));
 }
 function weeklyCountRows(items=weeklyFilteredProducts()){
- if(!state.weeklyMeta.active)return `<tr><td colspan="9"><div class="empty">Primero crea una semana para comenzar el conteo.</div></td></tr>`;
- if(!items.length)return `<tr><td colspan="9"><div class="empty">La semana está creada, pero todavía no has agregado productos.<br>Importa códigos o usa “Traer productos desde Inventario”.</div></td></tr>`;
+ if(!state.weeklyMeta.active)return `<tr><td colspan="10"><div class="empty">Primero crea una semana para comenzar el conteo.</div></td></tr>`;
+ if(!items.length)return `<tr><td colspan="10"><div class="empty">La semana está creada, pero todavía no has agregado productos.<br>Importa códigos o usa “Traer productos desde Inventario”.</div></td></tr>`;
  return items.map(p=>{
    const c=weeklyCountState(p.id),diff=weeklyDiff(p,c.physical),st=weeklyStatus(p,c.physical);
-   const disabled=state.weeklyMeta.closed?"disabled":"";
-   return `<tr>
+   const rowLocked=!!state.weeklyMeta.closed||!!c.confirmed;
+   const disabled=rowLocked?"disabled":"";
+   const expected=weeklyExpectedStock(p);
+   const confirmDisabled=state.weeklyMeta.closed?"disabled":"";
+   const confirmTitle=c.confirmed
+     ? `Confirmado${c.confirmedBy?` por ${c.confirmedBy}`:""}${c.confirmedAt?` · ${new Date(c.confirmedAt).toLocaleString("es-GT")}`:""}. Desmarca para editar.`
+     : "Solo se puede confirmar cuando Físico coincide con Existencia.";
+   return `<tr class="${c.confirmed?"weekly-row-confirmed":""}" data-weekly-row="${p.id}">
      <td><b>${esc(p.code)}</b></td>
-     <td>${p.weeklyOnly?`<input class="weekly-meta-input" data-weekly-extra-field="catalog" data-weekly-extra-id="${p.id}" value="${esc(p.catalog||"")}" placeholder="Catálogo (opcional)">`:esc(p.catalog||"—")}</td>
-     <td>${p.weeklyOnly?`<input class="weekly-meta-input weekly-desc-input" data-weekly-extra-field="name" data-weekly-extra-id="${p.id}" value="${esc(p.name==="Código no registrado"?"":p.name)}" placeholder="Descripción">`:esc(p.name)}</td>
-     <td>${p.weeklyOnly?`<input class="weekly-meta-input" data-weekly-extra-field="family" data-weekly-extra-id="${p.id}" value="${esc(p.family||"")}" placeholder="Familia">`:esc(p.family||"—")}</td>
-     <td class="qty">${p.weeklyOnly?`<input class="weekly-extra-stock no-spinner" data-weekly-extra-field="stock" data-weekly-extra-id="${p.id}" type="number" min="0" inputmode="numeric" value="${p.stock}" title="Existencia solo para esta semana">`:p.stock}</td>
+     <td>${p.weeklyOnly?`<input class="weekly-meta-input" data-weekly-extra-field="catalog" data-weekly-extra-id="${p.id}" value="${esc(p.catalog||"")}" placeholder="Catálogo (opcional)" ${disabled}>`:esc(p.catalog||"—")}</td>
+     <td>${p.weeklyOnly?`<input class="weekly-meta-input weekly-desc-input" data-weekly-extra-field="name" data-weekly-extra-id="${p.id}" value="${esc(p.name==="Código no registrado"?"":p.name)}" placeholder="Descripción" ${disabled}>`:esc(p.name)}</td>
+     <td>${p.weeklyOnly?`<input class="weekly-meta-input" data-weekly-extra-field="family" data-weekly-extra-id="${p.id}" value="${esc(p.family||"")}" placeholder="Familia" ${disabled}>`:esc(p.family||"—")}</td>
+     <td class="qty">${p.weeklyOnly?`<input class="weekly-extra-stock no-spinner" data-weekly-extra-field="stock" data-weekly-extra-id="${p.id}" type="number" min="0" inputmode="numeric" value="${expected}" title="Existencia solo para esta semana" ${disabled}>`:expected}</td>
      <td><input class="weekly-physical no-spinner" type="number" inputmode="numeric" min="0" step="1" placeholder="0" value="${c.physical===""?"":esc(c.physical)}" data-weekly-physical="${p.id}" ${disabled}></td>
+     <td class="weekly-confirm-cell"><label class="weekly-confirm-box" title="${esc(confirmTitle)}"><input type="checkbox" data-weekly-confirm="${p.id}" ${c.confirmed?"checked":""} ${confirmDisabled}><span aria-hidden="true">✓</span></label></td>
      <td class="qty weekly-diff" data-weekly-diff="${p.id}">${diff===""?"—":(diff>0?"+":"")+diff}</td>
      <td><span class="chip ${st.cls}" data-weekly-status="${p.id}">${st.text}</span></td>
      <td><input class="weekly-obs" type="text" placeholder="Observación..." value="${esc(c.obs)}" data-weekly-obs="${p.id}" ${disabled}></td>
@@ -1190,7 +1461,7 @@ function renderConteo(){
    <div class="table-wrap"><table class="weekly-table">
      <thead><tr>
        <th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th>
-       <th>Físico (editable)</th><th>Dif.</th><th>Estado</th><th>Obs. (editable)</th>
+       <th>Físico (editable)</th><th class="weekly-confirm-head">✓ Confirmar</th><th>Dif.</th><th>Estado</th><th>Obs. (editable)</th>
      </tr></thead>
      <tbody>${weeklyCountRows(items)}</tbody>
    </table></div>
@@ -2000,9 +2271,91 @@ function renderHerramientas(){return `<section class="panel tools-panel">
  </div>
  ${systemDiagnosticsHtml()}
  </section>`}
+function validLogoDataUrl(value){
+ return typeof value==="string"&&/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value);
+}
+function applyBranding(){
+ const name=state.settings.name||"Mi Bodega";
+ const brandName=$("#brandName");
+ if(brandName)brandName.textContent=name;
+ const icon=$("#brandIcon");
+ if(!icon)return;
+ icon.replaceChildren();
+ if(validLogoDataUrl(state.settings.logoDataUrl)){
+   const img=document.createElement("img");
+   img.src=state.settings.logoDataUrl;
+   img.alt=`Logo ${name}`;
+   icon.appendChild(img);
+   icon.classList.add("has-logo");
+ }else{
+   icon.textContent="▣";
+   icon.classList.remove("has-logo");
+ }
+}
+function optimizeLogoFile(file){
+ return new Promise((resolve,reject)=>{
+   if(!file||!String(file.type||"").startsWith("image/"))return reject(new Error("Selecciona una imagen PNG, JPG o WEBP."));
+   if(file.size>8*1024*1024)return reject(new Error("La imagen es demasiado grande. Máximo 8 MB."));
+   const reader=new FileReader();
+   reader.onerror=()=>reject(new Error("No se pudo leer la imagen."));
+   reader.onload=()=>{
+     const img=new Image();
+     img.onerror=()=>reject(new Error("La imagen no es válida."));
+     img.onload=()=>{
+       try{
+         const maxSide=320;
+         const ratio=Math.min(1,maxSide/Math.max(img.naturalWidth||1,img.naturalHeight||1));
+         let w=Math.max(1,Math.round(img.naturalWidth*ratio));
+         let h=Math.max(1,Math.round(img.naturalHeight*ratio));
+         const draw=(ww,hh,quality=.88)=>{
+           const canvas=document.createElement("canvas");
+           canvas.width=ww;canvas.height=hh;
+           const ctx=canvas.getContext("2d");
+           ctx.clearRect(0,0,ww,hh);
+           ctx.imageSmoothingEnabled=true;
+           ctx.imageSmoothingQuality="high";
+           ctx.drawImage(img,0,0,ww,hh);
+           let data=canvas.toDataURL("image/webp",quality);
+           if(!/^data:image\/webp/i.test(data))data=canvas.toDataURL("image/png");
+           return data;
+         };
+         let data=draw(w,h,.88);
+         if(data.length>190000){
+           const scale=.72;
+           w=Math.max(1,Math.round(w*scale));
+           h=Math.max(1,Math.round(h*scale));
+           data=draw(w,h,.78);
+         }
+         if(data.length>260000)return reject(new Error("No se pudo optimizar suficiente el logo. Usa una imagen más simple."));
+         resolve(data);
+       }catch(err){reject(err)}
+     };
+     img.src=String(reader.result||"");
+   };
+   reader.readAsDataURL(file);
+ });
+}
 function tags(list,type){return list.map((x,i)=>`<span class="tag">${esc(x)} <button data-remove-person="${type}:${i}">×</button></span>`).join("")}
 function renderConfig(){return `<section class="panel"><div class="panel-head"><div><h2>Configuración</h2><p>Nombre, personal y base de datos central.</p></div></div>
  <div class="setting"><div><b>Nombre de la bodega</b><p>Nombre mostrado en el menú.</p></div><input id="cfgName" value="${esc(state.settings.name)}" style="max-width:260px"></div>
+
+ <div class="setting logo-setting">
+   <div class="logo-setting-copy">
+     <b>Logo de la bodega</b>
+     <p>Se muestra en el menú de PC, tablet y teléfono. El sistema lo optimiza automáticamente y lo sincroniza con la configuración central.</p>
+   </div>
+   <div class="logo-editor">
+     <div class="logo-preview ${validLogoDataUrl(state.settings.logoDataUrl)?"has-logo":""}" id="logoPreview">
+       ${validLogoDataUrl(state.settings.logoDataUrl)?`<img src="${esc(state.settings.logoDataUrl)}" alt="Logo de la bodega">`:`<span>▣</span>`}
+     </div>
+     <div class="logo-editor-actions">
+       <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+       <button type="button" class="btn tonal" id="chooseLogoBtn">🖼️ Seleccionar logo</button>
+       <button type="button" class="btn danger-soft" id="removeLogoBtn" ${validLogoDataUrl(state.settings.logoDataUrl)?"":"disabled"}>Quitar logo</button>
+       <small>PNG, JPG o WEBP. Recomendado: imagen cuadrada o rectangular con fondo transparente.</small>
+     </div>
+   </div>
+ </div>
 
  <div class="setting central-staff-setting"><div style="width:100%"><b>Técnicos · BASE_TECNICOS</b><p>Lista maestra guardada en Google Sheets. Se recupera aunque borres los datos del navegador.</p><div id="techTags" class="list-editor">${tags(state.settings.technicians,"tech")}</div><div class="actions" style="margin-top:8px"><input id="newTech" placeholder="Nuevo técnico" style="max-width:240px"><button class="btn tonal" id="addTech">Guardar técnico</button></div></div></div>
 
@@ -2059,14 +2412,78 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
 
  <div class="actions" style="margin-top:14px"><button class="btn primary" id="saveCfg">Guardar configuración</button></div></section>`}
 const renderers={inicio:renderInicio,inventario:renderInventario,salida:renderSalida,conteo:renderConteo,diferencias:renderDiferencias,sinexist:renderSinExist,digital:renderDigital,herramientas:renderHerramientas,nuevos:renderNuevos,config:renderConfig};
-function render(){ $("#pageTitle").textContent=titles[state.page]||"Inicio";$("#content").innerHTML=(renderers[state.page]||renderInicio)();$$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===state.page));bind()}
+function isTouchTabletOrPhone(){
+ const coarse=window.matchMedia&&window.matchMedia("(pointer: coarse)").matches;
+ return window.innerWidth<=820||(window.innerWidth<=1100&&coarse);
+}
+function syncWeeklyStickyColumns(){
+ const table=document.querySelector(".weekly-table");
+ if(!table)return;
+ const active=isTouchTabletOrPhone();
+ if(!active){
+   table.style.removeProperty("--weekly-code-sticky-width");
+   return;
+ }
+ const first=table.querySelector("thead th:nth-child(1)")||table.querySelector("tbody td:nth-child(1)");
+ if(!first)return;
+ const width=Math.ceil(first.getBoundingClientRect().width);
+ if(width>0)table.style.setProperty("--weekly-code-sticky-width",width+"px");
+}
+function syncDigitalStickyColumns(){
+ const table=document.querySelector(".digital-table");
+ if(!table)return;
+ const active=isTouchTabletOrPhone();
+ if(!active){
+   table.style.removeProperty("--digital-acc-sticky-width");
+   table.style.removeProperty("--digital-code-sticky-width");
+   return;
+ }
+ const accCell=table.querySelector("thead th:nth-child(1)")||table.querySelector("tbody td:nth-child(1)");
+ const codeCell=table.querySelector("thead th:nth-child(2)")||table.querySelector("tbody td:nth-child(2)");
+ const accWidth=accCell?Math.ceil(accCell.getBoundingClientRect().width):68;
+ const codeWidth=codeCell?Math.ceil(codeCell.getBoundingClientRect().width):128;
+ if(accWidth>0)table.style.setProperty("--digital-acc-sticky-width",accWidth+"px");
+ if(codeWidth>0)table.style.setProperty("--digital-code-sticky-width",codeWidth+"px");
+}
+function syncGlobalSearchVisibility(){
+ const wrap=$("#globalSearchWrap");
+ const input=$("#globalSearch");
+ const topbar=document.querySelector(".topbar");
+ const visible=state.page==="inventario";
+ if(wrap)wrap.hidden=!visible;
+ if(topbar)topbar.classList.toggle("search-hidden",!visible);
+ if(!visible&&input&&input.value)input.value="";
+}
+function render(){
+ applyBranding();
+ $("#pageTitle").textContent=titles[state.page]||"Inicio";
+ syncGlobalSearchVisibility();
+ $("#content").innerHTML=(renderers[state.page]||renderInicio)();
+ $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===state.page));
+ bind();
+ requestAnimationFrame(()=>{syncWeeklyStickyColumns();syncDigitalStickyColumns();});
+ updateLiveStatusUI();
+}
 function nav(p){
  state.page=p;
  render();
  closeMenu();
  scrollTo({top:0,behavior:"smooth"});
 }
-function closeMenu(){$("#sidebar").classList.remove("open");$("#scrim").classList.remove("show")}
+function closeMenu(){
+ const sidebar=$("#sidebar"),scrim=$("#scrim"),menuBtn=$("#menuBtn");
+ sidebar?.classList.remove("open");
+ scrim?.classList.remove("show");
+ document.body.classList.remove("drawer-open");
+ menuBtn?.setAttribute("aria-expanded","false");
+}
+function openMenu(){
+ const sidebar=$("#sidebar"),scrim=$("#scrim"),menuBtn=$("#menuBtn");
+ sidebar?.classList.add("open");
+ scrim?.classList.add("show");
+ document.body.classList.add("drawer-open");
+ menuBtn?.setAttribute("aria-expanded","true");
+}
 function refreshProductReorder(){
  const stock=Math.max(0,Number($("#pStock")?.value||0));
  const max=Math.max(0,Number($("#pMax")?.value||0));
@@ -2099,23 +2516,27 @@ function bind(){
  $$("[data-view-product]").forEach(b=>b.onclick=()=>{let p=state.inventory.find(x=>x.id===b.dataset.viewProduct);if(p)openProductDetail(p)});
  $$("[data-view-movement]").forEach(b=>b.onclick=()=>{let m=state.movements.find(x=>x.id===b.dataset.viewMovement);if(m)openMovementDetail(m)});
  $$("[data-edit-movement]").forEach(b=>b.onclick=()=>{let m=state.movements.find(x=>x.id===b.dataset.editMovement);if(m)openQty(m)});
- $$("[data-delete-movement]").forEach(b=>b.onclick=()=>{
-  let m=state.movements.find(x=>x.id===b.dataset.deleteMovement);
+ $$('[data-delete-movement]').forEach(b=>b.onclick=async()=>{
+  const m=state.movements.find(x=>x.id===b.dataset.deleteMovement);
   if(!m)return;
   if(!confirm(`¿Eliminar la salida del código ${m.code} por ${m.qty} unidad(es)?`))return;
-  let p=itemForMovement(m);
-  if(p){
-    p.stock=(+p.stock||0)+(+m.qty||0);
-    p.reorder=Math.max(0,(+p.max||0)-(+p.stock||0));
-    syncStockoutRecordsFromInventory("Movimiento eliminado");
+  if(liveRealtimeReady()){
+    try{
+      const r=await cloudPostAction("live_movement_delete",{movementId:m.id});
+      applyLiveMovementDelete(m.id,r.deletedAt||new Date().toISOString());
+      if(r.product)applyLiveProductStock(r.product);
+      saveLocal();render();toast("Salida eliminada en vivo e inventario restaurado.");
+    }catch(err){toast(err?.message||"No se pudo eliminar la salida en vivo.");}
+    return;
   }
+  const p=itemForMovement(m);
+  if(p){p.stock=(+p.stock||0)+(+m.qty||0);p.reorder=Math.max(0,(+p.max||0)-(+p.stock||0));p.stockUpdatedAt=new Date().toISOString();syncStockoutRecordsFromInventory("Movimiento eliminado");}
   state.movements=state.movements.filter(x=>x.id!==m.id);
-  save();
-  render();
-  toast("Salida eliminada e inventario restaurado.");
+  state.movementTombstones[m.id]=new Date().toISOString();
+  save();render();toast("Salida eliminada e inventario restaurado.");
  });
- $$("[data-toggle-order-lock]").forEach(b=>{
-  b.onclick=e=>{
+ $$('[data-toggle-order-lock]').forEach(b=>{
+  b.onclick=async e=>{
     e.preventDefault();
     e.stopPropagation();
 
@@ -2130,7 +2551,10 @@ function bind(){
 
     if(orderIsLocked(m)){
       m.orderLocked=false;
-      save();
+      if(liveRealtimeReady()){
+        try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber||"",orderLocked:false,status:m.status||"Descargado"}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
+        catch(err){toast(err?.message||"No se pudo desbloquear en vivo.");return;}
+      }else save();
       render();
 
       setTimeout(()=>{
@@ -2146,7 +2570,10 @@ function bind(){
       toast("N. de Orden desbloqueado. Ya puedes editarlo.");
     }else{
       m.orderLocked=true;
-      save();
+      if(liveRealtimeReady()){
+        try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber||"",orderLocked:true,status:m.status||"Descargado"}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
+        catch(err){toast(err?.message||"No se pudo bloquear en vivo.");return;}
+      }else save();
       render();
       toast("N. de Orden bloqueado.");
     }
@@ -2173,22 +2600,28 @@ function bind(){
     m.orderNumber=i.value.trim();
     if(!m.orderNumber) m.orderLocked=false;
     updateStatus();
-    save();
+    saveLocal();
   };
 
-  i.onblur=()=>{
+  i.onblur=async()=>{
     if(orderIsLocked(m)) return;
     m.orderNumber=i.value.trim();
     if(m.orderNumber){
       m.orderLocked=true;
       updateStatus();
-      save();
+      if(liveRealtimeReady()){
+        try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber,orderLocked:true,status:m.status}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
+        catch(err){toast(err?.message||"No se pudo guardar el N. de Orden en vivo.");return;}
+      }else save();
       render();
       toast("N. de Orden guardado y bloqueado.");
     }else{
       m.orderLocked=false;
       updateStatus();
-      save();
+      if(liveRealtimeReady()){
+        try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:"",orderLocked:false,status:m.status}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
+        catch(err){toast(err?.message||"No se pudo actualizar el N. de Orden en vivo.");}
+      }else save();
     }
   };
 
@@ -2205,7 +2638,22 @@ function bindExit(){let f=$("#exitForm");if(!f)return;let inp=$("#exitCode"),box
  function infoUpdate(){let p=productByCode(inp.value);info.innerHTML=p?`<b>${esc(p.name)}</b> · Existencia: <b>${p.stock}</b>`:(inp.value.trim()?"Selecciona un código válido.":"Empieza a escribir para buscar.")}
  function show(){let q=inp.value.trim().toLowerCase();if(!q){box.hidden=true;return infoUpdate()}let a=state.inventory.filter(p=>p.code.toLowerCase().includes(q)||p.name.toLowerCase().includes(q)).slice(0,8);box.innerHTML=a.length?a.map(p=>`<button type="button" class="suggestion" data-code="${esc(p.code)}"><span><b>${esc(p.code)}</b><small>${esc(p.name)}</small></span><span class="stock">${p.stock}</span></button>`).join(""):`<div class="empty" style="padding:12px">Sin resultados</div>`;box.hidden=false;$$(".suggestion").forEach(b=>b.onpointerdown=e=>{e.preventDefault();inp.value=b.dataset.code;box.hidden=true;infoUpdate();$("#exitQty").focus()});infoUpdate()}
  inp.oninput=show;inp.onfocus=()=>inp.value.trim()&&show();inp.onblur=()=>setTimeout(()=>box.hidden=true,150);
- f.onsubmit=e=>{e.preventDefault();let p=productByCode(inp.value),raw=$("#exitQty").value.trim(),q=+raw,tech=$("#exitTech").value,keep=$("#exitKeeper").value;if(!p)return toast("Selecciona un código válido.");if(raw===""||!Number.isInteger(q)||q<1)return toast("Ingresa una cantidad válida.");if(!tech)return toast("Selecciona un técnico.");if(!keep)return toast("Selecciona un bodeguero.");if(q>p.stock)return toast("No hay suficiente existencia.");p.stock-=q;p.reorder=Math.max(0,(+p.max||0)-p.stock);syncStockoutRecordsFromInventory("Control de Salida");state.movements.push({id:uid(),date:new Date().toLocaleString("es-GT"),code:p.code,product:p.name,qty:q,technician:tech,keeper:keep,orderNumber:"",status:"PEND. DESCARGA",orderLocked:false});save();toast("Salida registrada.");render()}
+ f.onsubmit=async e=>{
+   e.preventDefault();
+   const p=productByCode(inp.value),raw=$("#exitQty").value.trim(),q=+raw,tech=$("#exitTech").value,keep=$("#exitKeeper").value;
+   if(!p)return toast("Selecciona un código válido.");if(raw===""||!Number.isInteger(q)||q<1)return toast("Ingresa una cantidad válida.");if(!tech)return toast("Selecciona un técnico.");if(!keep)return toast("Selecciona un bodeguero.");if(q>p.stock)return toast("No hay suficiente existencia.");
+   const movement={id:uid(),date:new Date().toLocaleString("es-GT"),code:p.code,product:p.name,qty:q,technician:tech,keeper:keep,orderNumber:"",status:"PEND. DESCARGA",orderLocked:false};
+   if(liveRealtimeReady()){
+     try{
+       const r=await cloudPostAction("live_movement_create",{movement});
+       if(r.movement)applyLiveMovementUpsert(r.movement);
+       if(r.product)applyLiveProductStock(r.product);
+       saveLocal();toast("Salida registrada en vivo.");render();
+     }catch(err){toast(err?.message||"No se pudo registrar la salida en vivo.");}
+     return;
+   }
+   p.stock-=q;p.reorder=Math.max(0,(+p.max||0)-p.stock);p.stockUpdatedAt=new Date().toISOString();syncStockoutRecordsFromInventory("Control de Salida");movement.createdAt=new Date().toISOString();movement.updatedAt=movement.createdAt;state.movements.push(movement);save();toast("Salida registrada.");render();
+ }
 }
 function closeWeeklyMenus(exceptId=""){
  ["filterMenu","fileMenu","printMenu","actionsMenu"].forEach(id=>{
@@ -2213,10 +2661,10 @@ function closeWeeklyMenus(exceptId=""){
  });
 }
 function weeklyCsvRows(items){
- return [["Código","Catálogo","Descripción","Familia","Existencia","Físico","Diferencia","Estado","Observación"],
+ return [["Código","Catálogo","Descripción","Familia","Existencia","Físico","Confirmado","Confirmado en","Confirmado por","Diferencia","Estado","Observación"],
  ...items.map(p=>{
    const c=weeklyCountState(p.id),diff=weeklyDiff(p,c.physical),st=weeklyStatus(p,c.physical);
-   return [p.code,p.catalog||"",p.name,p.family||"",p.stock,c.physical===""?"":c.physical,diff===""?"":diff,st.text,c.obs||""];
+   return [p.code,p.catalog||"",p.name,p.family||"",weeklyExpectedStock(p),c.physical===""?"":c.physical,c.confirmed?"Sí":"No",c.confirmedAt||"",c.confirmedBy||"",diff===""?"":diff,st.text,c.obs||""];
  })];
 }
 function exportWeeklyCSV(items=weeklyFilteredProducts(),filename="conteo-semanal.csv"){
@@ -2233,7 +2681,7 @@ function printWeekly(items,title){
  if(!items.length){toast("No hay productos para imprimir.");return}
  const rows=items.map(p=>{
    const c=weeklyCountState(p.id),diff=weeklyDiff(p,c.physical),st=weeklyStatus(p,c.physical);
-   return `<tr><td>${esc(p.code)}</td><td>${esc(p.catalog||"")}</td><td>${esc(p.name)}</td><td>${esc(p.family||"")}</td><td>${p.stock}</td><td>${c.physical===""?"":c.physical}</td><td>${diff===""?"":(diff>0?"+":"")+diff}</td><td>${st.text}</td><td>${esc(c.obs||"")}</td></tr>`;
+   return `<tr><td>${esc(p.code)}</td><td>${esc(p.catalog||"")}</td><td>${esc(p.name)}</td><td>${esc(p.family||"")}</td><td>${weeklyExpectedStock(p)}</td><td>${c.physical===""?"":c.physical}</td><td>${c.confirmed?"✓":""}</td><td>${diff===""?"":(diff>0?"+":"")+diff}</td><td>${st.text}</td><td>${esc(c.obs||"")}</td></tr>`;
  }).join("");
  const w=window.open("","_blank","width=1100,height=800");
  if(!w){toast("El navegador bloqueó la ventana de impresión.");return}
@@ -2242,7 +2690,7 @@ function printWeekly(items,title){
  table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #bbb;padding:6px;text-align:left}th{background:#eee}
  @media print{button{display:none}body{padding:0}}</style></head><body>
  <h1>${esc(title)}</h1><div class="sub">${esc(state.weeklyMeta.label||"")} · Responsable: ${esc(state.weeklyMeta.responsible||"")}</div>
- <table><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table>
+ <table><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>✓</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table>
  <script>window.onload=()=>window.print()<\/script></body></html>`);
  w.document.close();
 }
@@ -2250,7 +2698,7 @@ function addWeeklyProduct(product){
  if(!product)return false;
  if(!Array.isArray(state.weeklyMeta.productIds))state.weeklyMeta.productIds=[];
  if(!state.weeklyMeta.productIds.includes(product.id))state.weeklyMeta.productIds.push(product.id);
- if(!state.weeklyCounts[product.id])state.weeklyCounts[product.id]={physical:"",obs:"",updatedAt:""};
+ if(!state.weeklyCounts[product.id])state.weeklyCounts[product.id]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
  return true;
 }
 function bindCount(){
@@ -2318,7 +2766,7 @@ function bindCount(){
      if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
      const raw=input.value.trim();
      if(raw!==""&&(!/^\d+$/.test(raw)||Number(raw)<0)){toast("El conteo físico debe ser un número entero mayor o igual a 0.");return}
-     if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:""};
+     if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      state.weeklyCounts[productId].physical=raw===""?"":Number(raw);
      state.weeklyCounts[productId].updatedAt=new Date().toLocaleString("es-GT");
      const diff=weeklyDiff(product,state.weeklyCounts[productId].physical),st=weeklyStatus(product,state.weeklyCounts[productId].physical);
@@ -2329,6 +2777,52 @@ function bindCount(){
    };
    input.oninput=sync;input.onchange=sync;
  });
+ $$("[data-weekly-confirm]").forEach(checkbox=>{
+   const productId=checkbox.dataset.weeklyConfirm;
+   const product=[...state.inventory,...weeklyExtraProducts()].find(p=>p.id===productId);
+   if(!product)return;
+   checkbox.onchange=()=>{
+     if(!state.weeklyMeta.active||state.weeklyMeta.closed){checkbox.checked=!!weeklyCountState(productId).confirmed;return;}
+     if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
+     const c=state.weeklyCounts[productId];
+     if(checkbox.checked){
+       const physical=c.physical===0?0:(c.physical??"");
+       if(physical===""){
+         checkbox.checked=false;
+         toast("Primero escribe el conteo Físico antes de confirmar la fila.");
+         return;
+       }
+       const diff=weeklyDiff(product,physical);
+       if(diff!==0){
+         checkbox.checked=false;
+         toast(`No se puede confirmar: esta fila tiene diferencia ${diff>0?"+":""}${diff}.`);
+         return;
+       }
+       c.confirmed=true;
+       c.confirmedAt=new Date().toISOString();
+       c.confirmedBy=state.weeklyMeta.responsible||"";
+       c.confirmedStock=Number(product.stock||0);
+       c.updatedAt=new Date().toLocaleString("es-GT");
+       save();
+       render();
+       toast("Fila confirmada y bloqueada como Cuadreado.");
+     }else{
+       if(!confirm("¿Desbloquear esta fila para volver a editarla?")){
+         checkbox.checked=true;
+         return;
+       }
+       c.confirmed=false;
+       c.confirmedAt="";
+       c.confirmedBy="";
+       c.confirmedStock=null;
+       c.updatedAt=new Date().toLocaleString("es-GT");
+       save();
+       render();
+       toast("Fila desbloqueada.");
+     }
+   };
+ });
+
  $$("[data-weekly-extra-field]").forEach(input=>{
    input.oninput=()=>{
      if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
@@ -2354,7 +2848,7 @@ function bindCount(){
    const productId=input.dataset.weeklyObs;
    input.oninput=()=>{
      if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
-     if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:""};
+     if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      state.weeklyCounts[productId].obs=input.value;
      state.weeklyCounts[productId].updatedAt=new Date().toLocaleString("es-GT");save();
    };
@@ -2405,7 +2899,7 @@ function bindCount(){
      if(!p)return;
 
      if(!state.weeklyCounts[p.id]){
-       state.weeklyCounts[p.id]={physical:"",obs:"",updatedAt:""};
+       state.weeklyCounts[p.id]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      }
 
      if(!templateIdSet.has(p.id)){
@@ -2509,7 +3003,7 @@ function bindCount(){
  if(reset)reset.onclick=()=>{
    if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
    if(!confirm("¿Reiniciar Físico y Observaciones de todos los productos de esta semana?"))return;
-   const newCounts={};(state.weeklyMeta.productIds||[]).forEach(id=>newCounts[id]={physical:"",obs:"",updatedAt:""});
+   const newCounts={};(state.weeklyMeta.productIds||[]).forEach(id=>newCounts[id]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null});
    state.weeklyCounts=newCounts;save();render();toast("Conteo físico reiniciado.");
  };
  const sheets=$("#saveSheetsBtn");
@@ -2806,7 +3300,8 @@ function bindDigitalInlineOnly(){
      const st=digitalStatus(p,physical);
      const statusEl=$(`[data-digital-status="${id}"]`);
      if(statusEl){statusEl.textContent=st.text;statusEl.className=`chip ${st.cls}`}
-     save();
+     saveLocal();
+     if(!queueLiveDigitalUpsert(id))save();
    };
  });
  $$("[data-digital-obs]").forEach(input=>{
@@ -2817,7 +3312,8 @@ function bindDigitalInlineOnly(){
      state.digitalCounts[id].obs=input.value;
      const p=state.inventory.find(x=>x.id===id);
      if(p)syncDifferenceHistoryFromDigital(p);
-     save();
+     saveLocal();
+     if(!queueLiveDigitalUpsert(id))save();
    };
  });
  $$("[data-view-product]").forEach(b=>b.onclick=()=>{let p=state.inventory.find(x=>x.id===b.dataset.viewProduct);if(p)openProductDetail(p)});
@@ -3055,11 +3551,14 @@ async function importInventoryTxt(file){
      }
    }
 
-   state.inventory=built.products;
+   const importNow=new Date().toISOString();
+   state.inventory=built.products.map(p=>({...p,stockUpdatedAt:importNow}));
+   state.inventoryVersionAt=importNow;
    state.pendingBaseProducts=built.newPending;
    syncStockoutRecordsFromInventory("Importación TXT");
 
    // El conteo digital actual inicia limpio, pero el historial NO se borra.
+   state.digitalResetAt=importNow;
    state.digitalCounts={};
    state.digitalFilter={
      family:"",
@@ -3391,6 +3890,36 @@ function bindTools(){
 function bindConfig(){
  let s=$("#saveCfg");if(!s)return;
 
+ const logoFile=$("#logoFileInput");
+ const chooseLogo=$("#chooseLogoBtn");
+ const removeLogo=$("#removeLogoBtn");
+ if(chooseLogo&&logoFile)chooseLogo.onclick=()=>logoFile.click();
+ if(logoFile)logoFile.onchange=async()=>{
+   const file=logoFile.files?.[0];
+   if(!file)return;
+   try{
+     toast("Preparando logo...");
+     const data=await optimizeLogoFile(file);
+     state.settings.logoDataUrl=data;
+     save();
+     applyBranding();
+     render();
+     toast("Logo guardado y listo para sincronizar.");
+   }catch(err){
+     console.error(err);
+     toast(err?.message||"No se pudo cargar el logo.");
+   }
+ };
+ if(removeLogo)removeLogo.onclick=()=>{
+   if(!validLogoDataUrl(state.settings.logoDataUrl))return;
+   if(!confirm("¿Quitar el logo de la bodega?"))return;
+   state.settings.logoDataUrl="";
+   save();
+   applyBranding();
+   render();
+   toast("Logo eliminado.");
+ };
+
  $("#addTech").onclick=async()=>{
    const v=$("#newTech").value.trim();if(!v)return;
    if(!cloudReady())return toast("Conecta la base central para guardar técnicos.");
@@ -3474,7 +4003,7 @@ function bindConfig(){
 
  s.onclick=()=>{
    state.settings.name=$("#cfgName").value.trim()||"Mi Bodega";
-   $("#brandName").textContent=state.settings.name;
+   applyBranding();
    readCloudForm();
    save();
    toast("Configuración guardada.");
@@ -3505,11 +4034,14 @@ $("#productForm").onsubmit=e=>{
  );
  if(duplicate)return toast("Ese Código ya existe en Inventario.");
 
+ const productNow=new Date().toISOString();
  const data={
    code,catalog,name,family,location,
    stock,min,max,
-   reorder:Math.max(0,max-stock)
+   reorder:Math.max(0,max-stock),
+   stockUpdatedAt:productNow
  };
+ state.inventoryVersionAt=productNow;
 
  if(editingProductId){
    const p=state.inventory.find(x=>x.id===editingProductId);
@@ -3565,22 +4097,38 @@ $("#createWeekForm").onsubmit=e=>{
  state.weeklyMeta={active:true,label,responsible,closed:false,filterFamily:"",dateFrom:"",dateTo:"",productIds:[],extraProducts:[],lastArchiveId:"",closedAt:"",orderSource:"",templateCodeCount:0};
  save();$("#createWeekDialog").close();render();toast("Semana creada. Ahora puedes importar códigos o traer productos.");
 }
-$("#editQtyForm").onsubmit=e=>{e.preventDefault();let m=state.movements.find(x=>x.id===editingMovementId),p=itemForMovement(m);if(!m||!p)return toast("No se encontró la salida.");let raw=$("#eqQty").value.trim(),n=+raw,old=+m.qty,current=+p.stock,max=current+old;if(raw===""||!Number.isInteger(n)||n<1)return toast("Cantidad inválida.");if(n>max)return toast(`Máximo permitido: ${max}`);p.stock=current+old-n;p.reorder=Math.max(0,(+p.max||0)-p.stock);syncStockoutRecordsFromInventory("Edición de Salida");m.qty=n;save();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada e inventario ajustado.")}
-$("#editProductFromDetail").onclick=()=>{let p=state.inventory.find(x=>x.id===currentProductId);$("#productDetailDialog").close();if(p)openProduct(p)}
-$$("[data-close]").forEach(b=>b.onclick=()=>document.getElementById(b.dataset.close).close());
-$$("[data-page]").forEach(b=>b.onclick=()=>nav(b.dataset.page));$("#menuBtn").onclick=()=>{$("#sidebar").classList.add("open");$("#scrim").classList.add("show")};$("#moreBtn").onclick=()=>{$("#sidebar").classList.add("open");$("#scrim").classList.add("show")};$("#scrim").onclick=closeMenu;
-$("#themeBtn").onclick=()=>{state.settings.dark=!state.settings.dark;document.body.classList.toggle("dark",state.settings.dark);save()};document.body.classList.toggle("dark",state.settings.dark);$("#brandName").textContent=state.settings.name;
-$("#globalSearch").oninput=e=>{
- let q=e.target.value.trim().toLowerCase();
- if(!q){
-   if(state.page==="inventario")render();
+$("#editQtyForm").onsubmit=async e=>{
+ e.preventDefault();
+ const m=state.movements.find(x=>x.id===editingMovementId),p=itemForMovement(m);if(!m||!p)return toast("No se encontró la salida.");
+ const raw=$("#eqQty").value.trim(),n=+raw,old=+m.qty,current=+p.stock,max=current+old;
+ if(raw===""||!Number.isInteger(n)||n<1)return toast("Cantidad inválida.");if(n>max)return toast(`Máximo permitido: ${max}`);
+ if(liveRealtimeReady()){
+   try{const r=await cloudPostAction("live_movement_qty",{movementId:m.id,qty:n});if(r.movement)applyLiveMovementUpsert(r.movement);if(r.product)applyLiveProductStock(r.product);saveLocal();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada en vivo.");}
+   catch(err){toast(err?.message||"No se pudo actualizar la salida en vivo.");}
    return;
  }
- state.page="inventario";
- $("#pageTitle").textContent="Inventario";
- $("#content").innerHTML=renderInventario(orderedProducts(state.inventory.filter(p=>
-   `${p.code} ${p.catalog} ${p.name} ${p.family} ${p.location}`.toLowerCase().includes(q)
- )));
+ p.stock=current+old-n;p.reorder=Math.max(0,(+p.max||0)-p.stock);p.stockUpdatedAt=new Date().toISOString();syncStockoutRecordsFromInventory("Edición de Salida");m.qty=n;m.updatedAt=new Date().toISOString();save();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada e inventario ajustado.");
+}
+$("#editProductFromDetail").onclick=()=>{let p=state.inventory.find(x=>x.id===currentProductId);$("#productDetailDialog").close();if(p)openProduct(p)}
+$$("[data-close]").forEach(b=>b.onclick=()=>document.getElementById(b.dataset.close).close());
+$$("[data-page]").forEach(b=>b.onclick=()=>nav(b.dataset.page));
+$("#menuBtn").onclick=openMenu;
+$("#moreBtn").onclick=openMenu;
+$("#drawerCloseBtn").onclick=closeMenu;
+$("#scrim").onclick=closeMenu;
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeMenu()});
+window.addEventListener("resize",()=>{if(window.innerWidth>820)closeMenu();requestAnimationFrame(()=>{syncWeeklyStickyColumns();syncDigitalStickyColumns();});});
+window.addEventListener("orientationchange",()=>{setTimeout(()=>{syncWeeklyStickyColumns();syncDigitalStickyColumns();},120);});
+$("#themeBtn").onclick=()=>{state.settings.dark=!state.settings.dark;document.body.classList.toggle("dark",state.settings.dark);save()};document.body.classList.toggle("dark",state.settings.dark);applyBranding();
+$("#globalSearch").oninput=e=>{
+ if(state.page!=="inventario")return;
+ const q=e.target.value.trim().toLowerCase();
+ const items=q
+   ? orderedProducts(state.inventory.filter(p=>
+       `${p.code} ${p.catalog} ${p.name} ${p.family} ${p.location}`.toLowerCase().includes(q)
+     ))
+   : orderedProducts(state.inventory);
+ $("#content").innerHTML=renderInventario(items);
  $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page==="inventario"));
  bind();
 }
@@ -3599,6 +4147,7 @@ document.addEventListener("click",()=>{
 });
 window.addEventListener("online",()=>{
  if(cloudConfig.enabled&&cloudReady()){
+   if(liveRealtimeReady()){initializeLiveSync();}
    if(cloudConfig.autoSync)queueCloudSync(350);
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(350);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(350);
@@ -3606,7 +4155,9 @@ window.addEventListener("online",()=>{
  }
 });
 document.addEventListener("visibilitychange",()=>{
+ if(document.visibilityState==="hidden")stopLivePolling();
  if(document.visibilityState==="visible"&&cloudConfig.enabled&&cloudReady()){
+   if(liveRealtimeReady()){pollLiveEvents();startLivePolling();}
    if(cloudConfig.autoSync)queueCloudSync(600);
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(600);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(600);
@@ -3620,6 +4171,7 @@ setTimeout(async()=>{
    await syncFromCloud(true);
    await recoverDifferenceHistoryFromSheets(true);
    await recoverWeeklyHistoryList(true);
+   await initializeLiveSync();
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(900);
    if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),1200);
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(1800);

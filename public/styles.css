@@ -3213,3 +3213,777 @@ input,select,textarea{
     left:54px !important;
   }
 }
+
+/* ==========================================================
+   V58 - MENÚ MÓVIL / TABLET PROFESIONAL
+   Drawer con iconos + nombres visibles en todos los tamaños móviles.
+   ========================================================== */
+.drawer-close{display:none}
+
+@media (max-width:820px){
+  /* El drawer móvil nunca hereda el modo "solo iconos" de laptop. */
+  .sidebar{
+    width:min(88vw,318px) !important;
+    max-width:318px !important;
+    padding:14px 12px 18px !important;
+    align-items:stretch !important;
+    background:var(--card) !important;
+    border-radius:0 26px 26px 0 !important;
+    box-shadow:18px 0 48px rgba(20,20,35,.18) !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
+  }
+
+  .sidebar .brand{
+    position:sticky !important;
+    top:-14px !important;
+    z-index:4 !important;
+    display:grid !important;
+    grid-template-columns:48px minmax(0,1fr) 40px !important;
+    align-items:center !important;
+    gap:11px !important;
+    min-height:76px !important;
+    padding:14px 5px 13px !important;
+    margin-bottom:8px !important;
+    background:var(--card) !important;
+    border-bottom:1px solid var(--outline) !important;
+  }
+
+  .sidebar .brand-icon{
+    width:46px !important;
+    height:46px !important;
+    border-radius:15px !important;
+    font-size:21px !important;
+  }
+
+  .sidebar .brand-copy,
+  .sidebar .brand>div:last-of-type,
+  .sidebar .brand div:last-child{
+    display:block !important;
+    min-width:0 !important;
+  }
+
+  .sidebar .brand strong{
+    display:block !important;
+    font-size:17px !important;
+    line-height:1.15 !important;
+    color:var(--text) !important;
+  }
+
+  .sidebar .brand small{
+    display:block !important;
+    margin-top:4px !important;
+    font-size:11px !important;
+    color:var(--muted) !important;
+  }
+
+  .drawer-close{
+    display:grid !important;
+    place-items:center !important;
+    width:38px !important;
+    height:38px !important;
+    min-width:38px !important;
+    min-height:38px !important;
+    padding:0 !important;
+    border:1px solid var(--outline) !important;
+    border-radius:13px !important;
+    background:var(--surface) !important;
+    color:var(--text) !important;
+    font-size:24px !important;
+    line-height:1 !important;
+    cursor:pointer !important;
+  }
+
+  .sidebar nav{
+    display:flex !important;
+    flex-direction:column !important;
+    gap:5px !important;
+    width:100% !important;
+    padding:2px 0 10px !important;
+  }
+
+  .sidebar .nav{
+    width:100% !important;
+    height:50px !important;
+    min-height:50px !important;
+    padding:0 13px !important;
+    justify-content:flex-start !important;
+    align-items:center !important;
+    gap:13px !important;
+    border-radius:15px !important;
+    background:transparent !important;
+    color:var(--muted) !important;
+    font-size:14px !important;
+    font-weight:600 !important;
+    line-height:1.15 !important;
+    text-align:left !important;
+    white-space:nowrap !important;
+    overflow:visible !important;
+  }
+
+  .sidebar .nav span{
+    flex:0 0 30px !important;
+    width:30px !important;
+    min-width:30px !important;
+    display:grid !important;
+    place-items:center !important;
+    font-size:19px !important;
+    line-height:1 !important;
+    text-align:center !important;
+  }
+
+  .sidebar .nav.active{
+    background:var(--primary-soft) !important;
+    color:var(--text) !important;
+    font-weight:800 !important;
+    box-shadow:inset 3px 0 0 var(--primary) !important;
+  }
+
+  .sidebar .nav:active{
+    transform:scale(.985);
+  }
+
+  .sidebar .side-foot{
+    display:flex !important;
+    margin-top:auto !important;
+    padding:14px 10px 8px !important;
+    border-top:1px solid var(--outline) !important;
+    font-size:11px !important;
+    line-height:1.25 !important;
+  }
+
+  /* Botón hamburguesa disponible también en tablet (761–820px). */
+  #menuBtn.mobile-only{
+    display:grid !important;
+  }
+
+  .scrim.show{
+    display:block !important;
+    position:fixed !important;
+    inset:0 !important;
+    z-index:110 !important;
+    background:rgba(15,16,24,.42) !important;
+    backdrop-filter:blur(2px) !important;
+  }
+
+  body.drawer-open{
+    overflow:hidden !important;
+    touch-action:none;
+  }
+}
+
+@media (max-width:420px){
+  .sidebar{
+    width:min(90vw,306px) !important;
+  }
+  .sidebar .nav{
+    height:48px !important;
+    min-height:48px !important;
+    font-size:13.5px !important;
+  }
+}
+
+/* ==========================================================
+   V59 - CONTEO SEMANAL: CÓDIGO + CATÁLOGO FIJOS EN MÓVIL/TABLET
+   En PC la tabla permanece normal.
+   ========================================================== */
+
+/* Teléfonos y tablets en vertical / viewport compacto,
+   y tablets táctiles en horizontal hasta 1100px. */
+@media (max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .weekly-panel .table-wrap{
+    position:relative;
+    overflow-x:auto !important;
+    overflow-y:visible !important;
+    -webkit-overflow-scrolling:touch;
+    isolation:isolate;
+  }
+
+  .weekly-table{
+    /* JS actualiza este valor con el ancho REAL del Código. */
+    --weekly-code-sticky-width:138px;
+    table-layout:auto !important;
+    width:max-content !important;
+    min-width:1120px !important;
+  }
+
+  /* 1. Código: una línea, texto completo. */
+  .weekly-table th:nth-child(1),
+  .weekly-table td:nth-child(1){
+    position:sticky !important;
+    left:0 !important;
+    min-width:118px !important;
+    width:max-content !important;
+    max-width:none !important;
+    z-index:8 !important;
+    background:var(--surface) !important;
+    white-space:nowrap !important;
+    word-break:normal !important;
+    overflow-wrap:normal !important;
+    text-overflow:clip !important;
+    overflow:visible !important;
+    hyphens:none !important;
+  }
+
+  .weekly-table thead th:nth-child(1){
+    z-index:13 !important;
+    background:var(--card2) !important;
+  }
+
+  /* 2. Catálogo: se pega exactamente después del ancho real de Código. */
+  .weekly-table th:nth-child(2),
+  .weekly-table td:nth-child(2){
+    position:sticky !important;
+    left:var(--weekly-code-sticky-width) !important;
+    min-width:108px !important;
+    width:max-content !important;
+    max-width:none !important;
+    z-index:7 !important;
+    background:var(--surface) !important;
+    white-space:nowrap !important;
+    word-break:normal !important;
+    overflow-wrap:normal !important;
+    text-overflow:clip !important;
+    overflow:visible !important;
+    hyphens:none !important;
+    box-shadow:9px 0 13px -11px rgba(15,23,42,.72);
+  }
+
+  .weekly-table thead th:nth-child(2){
+    z-index:12 !important;
+    background:var(--card2) !important;
+  }
+
+  .weekly-table tbody tr:hover td:nth-child(1),
+  .weekly-table tbody tr:hover td:nth-child(2){
+    background:var(--surface) !important;
+  }
+}
+
+/* Celular angosto: padding compacto, sin cortar el contenido. */
+@media (max-width:560px){
+  .weekly-table th:nth-child(1),
+  .weekly-table td:nth-child(1),
+  .weekly-table th:nth-child(2),
+  .weekly-table td:nth-child(2){
+    padding-left:7px !important;
+    padding-right:7px !important;
+    font-size:10.5px !important;
+  }
+}
+
+
+/* ==========================================================
+   V60 - INVENTARIO DIGITAL: ACC. + CÓDIGO + CATÁLOGO FIJOS EN MÓVIL/TABLET
+   En PC la tabla permanece normal.
+   ========================================================== */
+@media (max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .digital-panel .table-wrap{
+    position:relative;
+    overflow-x:auto !important;
+    overflow-y:visible !important;
+    -webkit-overflow-scrolling:touch;
+    isolation:isolate;
+  }
+
+  .digital-table{
+    --digital-acc-sticky-width:68px;
+    --digital-code-sticky-width:132px;
+    table-layout:auto !important;
+    width:max-content !important;
+    min-width:1220px !important;
+  }
+
+  /* 1. Acc. */
+  .digital-table th:nth-child(1),
+  .digital-table td:nth-child(1){
+    position:sticky !important;
+    left:0 !important;
+    width:68px !important;
+    min-width:68px !important;
+    max-width:68px !important;
+    z-index:9 !important;
+    background:var(--surface) !important;
+    text-align:center !important;
+  }
+
+  .digital-table thead th:nth-child(1){
+    z-index:14 !important;
+    background:var(--card2) !important;
+  }
+
+  /* 2. Código */
+  .digital-table th:nth-child(2),
+  .digital-table td:nth-child(2){
+    position:sticky !important;
+    left:var(--digital-acc-sticky-width) !important;
+    min-width:max-content !important;
+    width:max-content !important;
+    max-width:none !important;
+    z-index:8 !important;
+    background:var(--surface) !important;
+    white-space:nowrap !important;
+    word-break:normal !important;
+    overflow-wrap:normal !important;
+    text-overflow:clip !important;
+    overflow:visible !important;
+    hyphens:none !important;
+  }
+
+  .digital-table thead th:nth-child(2){
+    z-index:13 !important;
+    background:var(--card2) !important;
+  }
+
+  /* 3. Catálogo */
+  .digital-table th:nth-child(3),
+  .digital-table td:nth-child(3){
+    position:sticky !important;
+    left:calc(var(--digital-acc-sticky-width) + var(--digital-code-sticky-width)) !important;
+    min-width:max-content !important;
+    width:max-content !important;
+    max-width:none !important;
+    z-index:7 !important;
+    background:var(--surface) !important;
+    white-space:nowrap !important;
+    word-break:normal !important;
+    overflow-wrap:normal !important;
+    text-overflow:clip !important;
+    overflow:visible !important;
+    hyphens:none !important;
+    box-shadow:10px 0 14px -11px rgba(15,23,42,.72);
+  }
+
+  .digital-table thead th:nth-child(3){
+    z-index:12 !important;
+    background:var(--card2) !important;
+  }
+
+  .digital-table tbody tr:hover td:nth-child(1),
+  .digital-table tbody tr:hover td:nth-child(2),
+  .digital-table tbody tr:hover td:nth-child(3){
+    background:var(--surface) !important;
+  }
+}
+
+/* Celular angosto: mantener tocable pero más compacto. */
+@media (max-width:560px){
+  .digital-table th:nth-child(1),
+  .digital-table td:nth-child(1){
+    width:62px !important;
+    min-width:62px !important;
+    max-width:62px !important;
+    padding-left:8px !important;
+    padding-right:8px !important;
+  }
+
+  .digital-table input[data-digital-physical]{
+    max-width:92px !important;
+    min-height:38px !important;
+    height:38px !important;
+    font-size:12px !important;
+  }
+
+  .digital-table input[data-digital-obs]{
+    min-width:150px !important;
+  }
+}
+
+/* ==========================================================
+   V61 - BUSCADOR GLOBAL SOLO EN INVENTARIO
+   Fuera de Inventario desaparece completamente.
+   ========================================================== */
+#globalSearchWrap[hidden]{
+  display:none !important;
+}
+
+/* En escritorio, sin buscador no queda espacio reservado. */
+.topbar.search-hidden .top-actions{
+  margin-left:auto;
+}
+
+/* Móvil/tablet: la regla histórica reservaba espacio inferior para el
+   buscador absoluto. Cuando está oculto, compactamos el encabezado. */
+@media (max-width:820px){
+  .topbar.search-hidden{
+    padding-bottom:12px !important;
+    min-height:auto !important;
+  }
+
+  .topbar.search-hidden .top-actions{
+    position:static !important;
+    width:auto !important;
+    margin-left:auto !important;
+  }
+}
+
+@media (max-width:560px){
+  .topbar.search-hidden{
+    padding-bottom:10px !important;
+  }
+}
+
+
+/* ==========================================================
+   V62 - LOGO DE LA BODEGA
+   ========================================================== */
+.brand-icon{
+  flex:0 0 auto;
+  overflow:hidden;
+}
+.brand-icon.has-logo{
+  padding:4px;
+  background:#fff;
+  border:1px solid var(--outline);
+}
+.brand-icon.has-logo img{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  border-radius:10px;
+}
+.logo-setting{
+  align-items:flex-start !important;
+}
+.logo-setting-copy{
+  flex:1 1 380px;
+  min-width:0;
+}
+.logo-editor{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:14px;
+  flex:0 1 520px;
+}
+.logo-preview{
+  width:86px;
+  height:86px;
+  flex:0 0 86px;
+  border:1.5px dashed var(--outline);
+  border-radius:20px;
+  background:var(--surface);
+  display:grid;
+  place-items:center;
+  color:var(--primary);
+  font-size:34px;
+  overflow:hidden;
+}
+.logo-preview.has-logo{
+  border-style:solid;
+  background:#fff;
+  padding:6px;
+}
+.logo-preview img{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  border-radius:13px;
+}
+.logo-editor-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+  min-width:0;
+}
+.logo-editor-actions small{
+  display:block;
+  flex-basis:100%;
+  max-width:390px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.35;
+}
+@media(max-width:820px){
+  .logo-setting{
+    display:block !important;
+  }
+  .logo-editor{
+    justify-content:flex-start;
+    margin-top:14px;
+    width:100%;
+  }
+  .logo-preview{
+    width:74px;
+    height:74px;
+    flex-basis:74px;
+    border-radius:18px;
+  }
+}
+@media(max-width:480px){
+  .logo-editor{
+    align-items:flex-start;
+  }
+  .logo-editor-actions{
+    flex:1 1 auto;
+  }
+  .logo-editor-actions .btn{
+    width:100%;
+  }
+}
+
+
+/* ==========================================================
+   V63 - MULTIUSUARIO CASI EN TIEMPO REAL
+   ========================================================== */
+.live-status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  height:38px;
+  padding:0 12px;
+  border:1px solid var(--outline);
+  border-radius:999px;
+  background:var(--card);
+  color:var(--muted);
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.live-status-pill[hidden]{display:none!important}
+.live-dot{
+  width:8px;height:8px;border-radius:50%;background:#94a3b8;
+  box-shadow:0 0 0 3px rgba(148,163,184,.14);
+}
+.live-status-pill.ok{color:#166534;border-color:#bbf7d0;background:#f0fdf4}
+.live-status-pill.ok .live-dot{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.14)}
+.live-status-pill.syncing .live-dot{background:#2563eb;animation:livePulse 1s infinite}
+.live-status-pill.error{color:#92400e;border-color:#fde68a;background:#fffbeb}
+.live-status-pill.error .live-dot{background:#f59e0b}
+@keyframes livePulse{50%{opacity:.35;transform:scale(.82)}}
+@media(max-width:820px){
+  .live-status-pill{height:34px;padding:0 9px;font-size:10px}
+  .topbar.search-hidden .live-status-pill{margin-left:auto}
+}
+@media(max-width:430px){
+  .live-status-pill{padding:0 8px}
+  .live-status-pill #liveStatusText{max-width:82px;overflow:hidden;text-overflow:ellipsis}
+}
+
+
+/* ==========================================================
+   V64 - CONTEO SEMANAL: CONFIRMAR Y BLOQUEAR FILA
+   + columnas Catálogo/Descripción más compactas
+   ========================================================== */
+.weekly-table{
+  width:max-content !important;
+  min-width:1180px !important;
+  table-layout:auto !important;
+}
+
+/* Código, Catálogo y Descripción siguen completos y en una línea. */
+.weekly-table th:nth-child(1),.weekly-table td:nth-child(1){min-width:150px !important;width:150px !important;white-space:nowrap !important}
+.weekly-table th:nth-child(2),.weekly-table td:nth-child(2){min-width:150px !important;width:150px !important;white-space:nowrap !important;padding-left:8px !important;padding-right:8px !important}
+.weekly-table th:nth-child(3),.weekly-table td:nth-child(3){min-width:250px !important;width:250px !important;white-space:nowrap !important;padding-left:8px !important;padding-right:10px !important}
+.weekly-table th:nth-child(4),.weekly-table td:nth-child(4){width:68px !important;min-width:68px !important;max-width:68px !important}
+.weekly-table th:nth-child(5),.weekly-table td:nth-child(5){width:58px !important;min-width:58px !important;max-width:58px !important}
+.weekly-table th:nth-child(6),.weekly-table td:nth-child(6){width:104px !important;min-width:104px !important;max-width:104px !important}
+
+/* Nueva columna Confirmar */
+.weekly-table th:nth-child(7),.weekly-table td:nth-child(7){
+  width:78px !important;min-width:78px !important;max-width:78px !important;
+  padding-left:6px !important;padding-right:6px !important;text-align:center !important;vertical-align:middle !important;
+}
+.weekly-table th:nth-child(8),.weekly-table td:nth-child(8){width:54px !important;min-width:54px !important;max-width:54px !important;text-align:center !important}
+.weekly-table th:nth-child(9),.weekly-table td:nth-child(9){width:92px !important;min-width:92px !important;max-width:92px !important;text-align:center !important}
+.weekly-table th:nth-child(10),.weekly-table td:nth-child(10){width:150px !important;min-width:150px !important;max-width:150px !important}
+.weekly-table input[data-weekly-obs]{width:132px !important;min-width:132px !important;max-width:132px !important}
+
+.weekly-confirm-head{white-space:nowrap !important}
+.weekly-confirm-cell{text-align:center !important}
+.weekly-confirm-box{
+  display:inline-grid !important;
+  place-items:center;
+  width:34px;height:34px;
+  margin:auto;
+  cursor:pointer;
+  position:relative;
+}
+.weekly-confirm-box input{
+  appearance:none;-webkit-appearance:none;
+  width:28px !important;height:28px !important;min-height:28px !important;
+  margin:0 !important;padding:0 !important;
+  border:1.5px solid #aeb8c9 !important;
+  border-radius:8px !important;
+  background:#fff !important;
+  cursor:pointer;
+}
+.weekly-confirm-box span{
+  position:absolute;inset:0;
+  display:grid;place-items:center;
+  color:white;font-size:17px;font-weight:900;
+  pointer-events:none;opacity:0;
+}
+.weekly-confirm-box input:checked{
+  background:#2e7d4f !important;
+  border-color:#2e7d4f !important;
+}
+.weekly-confirm-box input:checked + span{opacity:1}
+.weekly-confirm-box input:disabled{cursor:not-allowed;opacity:.72}
+
+.weekly-row-confirmed > td{
+  background:rgba(46,125,79,.055) !important;
+}
+.weekly-row-confirmed td:first-child{
+  box-shadow:inset 4px 0 0 #2e7d4f;
+}
+.weekly-row-confirmed input:not([type="checkbox"]){
+  background:#eef4ef !important;
+  color:#59645d !important;
+}
+.weekly-confirmed-mark{
+  display:inline-grid;place-items:center;
+  width:25px;height:25px;border-radius:50%;
+  background:#d8f1df;color:#166534;font-weight:900;
+}
+
+/* Móvil/tablet: mantener Código + Catálogo sticky de V59 y compactar el resto. */
+@media (max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .weekly-table{min-width:1100px !important}
+  .weekly-table th:nth-child(1),.weekly-table td:nth-child(1){min-width:125px !important;width:max-content !important}
+  .weekly-table th:nth-child(2),.weekly-table td:nth-child(2){min-width:112px !important;width:max-content !important}
+  .weekly-table th:nth-child(3),.weekly-table td:nth-child(3){min-width:220px !important;width:220px !important}
+  .weekly-table th:nth-child(7),.weekly-table td:nth-child(7){width:68px !important;min-width:68px !important;max-width:68px !important}
+  .weekly-confirm-box{width:38px;height:38px}
+  .weekly-confirm-box input{width:30px !important;height:30px !important;min-height:30px !important}
+  .weekly-table th:nth-child(10),.weekly-table td:nth-child(10){width:138px !important;min-width:138px !important;max-width:138px !important}
+  .weekly-table input[data-weekly-obs]{width:120px !important;min-width:120px !important;max-width:120px !important}
+}
+
+/* ==========================================================
+   V65 - CONTEO SEMANAL: TABLA AJUSTADA AL ANCHO DEL PANEL
+   Corrige el espacio vacío a la derecha de V64.
+   ========================================================== */
+
+/* PC / escritorio: la tabla llena el panel completo. */
+@media (min-width:821px){
+  .weekly-panel .table-wrap{
+    width:100% !important;
+    max-width:100% !important;
+    overflow-x:auto !important;
+  }
+
+  .weekly-table{
+    width:100% !important;
+    min-width:1180px !important;
+    max-width:none !important;
+    table-layout:auto !important;
+  }
+
+  /* Reparto profesional del ancho disponible */
+  .weekly-table th:nth-child(1),
+  .weekly-table td:nth-child(1){
+    width:15% !important;
+    min-width:150px !important;
+    max-width:none !important;
+  }
+
+  .weekly-table th:nth-child(2),
+  .weekly-table td:nth-child(2){
+    width:13% !important;
+    min-width:135px !important;
+    max-width:none !important;
+    padding-left:8px !important;
+    padding-right:8px !important;
+  }
+
+  .weekly-table th:nth-child(3),
+  .weekly-table td:nth-child(3){
+    width:23% !important;
+    min-width:215px !important;
+    max-width:none !important;
+    padding-left:8px !important;
+    padding-right:10px !important;
+  }
+
+  .weekly-table th:nth-child(4),
+  .weekly-table td:nth-child(4){
+    width:6% !important;
+    min-width:64px !important;
+    max-width:80px !important;
+  }
+
+  .weekly-table th:nth-child(5),
+  .weekly-table td:nth-child(5){
+    width:5% !important;
+    min-width:58px !important;
+    max-width:72px !important;
+  }
+
+  .weekly-table th:nth-child(6),
+  .weekly-table td:nth-child(6){
+    width:10% !important;
+    min-width:108px !important;
+    max-width:145px !important;
+  }
+
+  .weekly-table th:nth-child(7),
+  .weekly-table td:nth-child(7){
+    width:7% !important;
+    min-width:76px !important;
+    max-width:98px !important;
+  }
+
+  .weekly-table th:nth-child(8),
+  .weekly-table td:nth-child(8){
+    width:5% !important;
+    min-width:52px !important;
+    max-width:68px !important;
+  }
+
+  .weekly-table th:nth-child(9),
+  .weekly-table td:nth-child(9){
+    width:7% !important;
+    min-width:86px !important;
+    max-width:104px !important;
+  }
+
+  .weekly-table th:nth-child(10),
+  .weekly-table td:nth-child(10){
+    width:9% !important;
+    min-width:138px !important;
+    max-width:180px !important;
+  }
+
+  .weekly-table input[data-weekly-physical]{
+    width:82px !important;
+    min-width:82px !important;
+    max-width:82px !important;
+  }
+
+  .weekly-table input[data-weekly-obs]{
+    width:120px !important;
+    min-width:120px !important;
+    max-width:150px !important;
+  }
+}
+
+/* Tablet y celular: mantener el comportamiento móvil de V59/V64. */
+@media (max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .weekly-table{
+    width:max-content !important;
+    min-width:1100px !important;
+    table-layout:auto !important;
+  }
+
+  .weekly-table th:nth-child(2),
+  .weekly-table td:nth-child(2){
+    min-width:112px !important;
+    width:max-content !important;
+    max-width:none !important;
+  }
+
+  .weekly-table th:nth-child(3),
+  .weekly-table td:nth-child(3){
+    min-width:190px !important;
+    width:190px !important;
+    max-width:230px !important;
+  }
+}

@@ -12,8 +12,9 @@
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brand-icon">▣</div>
-      <div><strong id="brandName">Mi Bodega</strong><small>Control de inventario</small></div>
+      <div class="brand-icon" id="brandIcon" aria-label="Logo de la bodega">▣</div>
+      <div class="brand-copy"><strong id="brandName">Mi Bodega</strong><small>Control de inventario</small></div>
+      <button type="button" class="drawer-close" id="drawerCloseBtn" aria-label="Cerrar menú" title="Cerrar menú">×</button>
     </div>
     <nav id="sideNav">
       <button class="nav active" data-page="inicio"><span>⌂</span>Inicio</button>
@@ -37,7 +38,10 @@
         <div><small>Sistema de bodega</small><h1 id="pageTitle">Inicio</h1></div>
       </div>
       <div class="top-actions">
-        <div class="search"><span>⌕</span><input id="globalSearch" placeholder="Buscar producto..."></div>
+        <div class="live-status-pill" id="liveStatusPill" title="Sincronización multiusuario" hidden>
+          <span class="live-dot"></span><span id="liveStatusText">En vivo</span>
+        </div>
+        <div class="search" id="globalSearchWrap" hidden><span>⌕</span><input id="globalSearch" placeholder="Buscar producto..." autocomplete="off"></div>
         <button class="icon-btn" id="themeBtn">◐</button>
       </div>
     </header>
