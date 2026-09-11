@@ -18,6 +18,12 @@ if(DEPLOY_CONFIG.enabled&&DEPLOY_CONFIG.apiUrl){
  if(DEPLOY_CONFIG.token)cloudConfig.token=String(DEPLOY_CONFIG.token);
 }
 let cloudSyncTimer=null,cloudSyncing=false,cloudLoading=false;
+const AUTO_CENTRAL_CHECK_MS=6000;
+const CENTRAL_REVISION_KEY="b34_central_revision";
+let centralRevision=localStorage.getItem(CENTRAL_REVISION_KEY)||"";
+let centralAutoTimer=null,centralAutoChecking=false;
+let localChangeSerial=0,lastPushedSerial=0;
+let centralLastOk=0,centralLastError="";
 const state={
  page:"inicio",
  inventory:get("b34_inventory",DEFAULT_PRODUCTS),
@@ -96,13 +102,14 @@ function saveLocal(){
 }
 function save(){
  saveLocal();
- if(!cloudLoading&&cloudConfig.enabled&&cloudConfig.autoSync&&cloudReady()){
-   queueCloudSync();
+ if(!cloudLoading){
+   localChangeSerial++;
+   if(cloudConfig.enabled&&cloudConfig.autoSync&&cloudReady()) queueCloudSync(900);
  }
 }
 function cloudSnapshot(){
  return {
-   version:"V67 CONTEO SEMANAL EN VIVO ESTABLE",
+   version:"V69 GOOGLE SHEETS AUTOSYNC ESTABLE",
    savedAt:new Date().toISOString(),
    inventory:state.inventory,
    movements:state.movements,
@@ -218,13 +225,14 @@ function markCloud(status){
  saveCloudConfig();
  updateCloudStatusUI();
 }
-function queueCloudSync(delay=1200){
+function queueCloudSync(delay=900){
  clearTimeout(cloudSyncTimer);
  cloudSyncTimer=setTimeout(async()=>{
+   cloudSyncTimer=null;
    const ok=await syncToCloud(true);
    if(!ok&&cloudConfig.enabled&&cloudConfig.autoSync&&cloudReady()){
      clearTimeout(cloudSyncTimer);
-     cloudSyncTimer=setTimeout(()=>syncToCloud(true),15000);
+     cloudSyncTimer=setTimeout(()=>{cloudSyncTimer=null;syncToCloud(true);},12000);
    }
  },delay);
 }
@@ -278,7 +286,7 @@ const liveWeeklyPatches=new Map();
 let liveRenderPending=false;
 
 function liveRealtimeReady(){
- return !!(cloudConfig.enabled&&cloudReady()&&cloudConfig.proxy);
+ return false; // V69: sin modo tiempo real; usa sincronización automática estable con Google Sheets.
 }
 function setLiveCursor(v){
  const n=Number(v||0)||0;
@@ -290,22 +298,21 @@ function setLiveCursor(v){
 function updateLiveStatusUI(){
  const pill=$("#liveStatusPill"),txt=$("#liveStatusText");
  if(!pill||!txt)return;
- const show=!!(cloudConfig.enabled&&cloudConfig.proxy);
+ const show=!!(cloudConfig.enabled&&cloudReady()&&cloudConfig.autoSync);
  pill.hidden=!show;
  if(!show)return;
- const ok=liveRealtimeReady()&&liveState.lastOk&&Date.now()-liveState.lastOk<15000;
- const syncing=liveState.polling;
- pill.classList.toggle("ok",!!ok);
- pill.classList.toggle("syncing",!!syncing);
- pill.classList.toggle("error",!!liveState.error&&!ok);
- if(syncing)txt.textContent="En vivo · actualizando";
- else if(ok){
-   const secs=Math.max(0,Math.round((Date.now()-liveState.lastOk)/1000));
-   txt.textContent=secs<3?"En vivo · rápido":"En vivo · "+secs+" s";
- }else if(liveState.error)txt.textContent="En vivo · reconectando";
- else txt.textContent="En vivo";
+ pill.classList.remove("ok","syncing","error");
+ if(cloudConfig.status==="syncing"||centralAutoChecking){
+   pill.classList.add("syncing");txt.textContent="Auto Sync · sincronizando";
+ }else if(cloudConfig.status==="error"||centralLastError){
+   pill.classList.add("error");txt.textContent="Auto Sync · reintentando";
+ }else{
+   pill.classList.add("ok");
+   const secs=centralLastOk?Math.max(0,Math.round((Date.now()-centralLastOk)/1000)):0;
+   txt.textContent=secs&&secs>8?`Auto Sync · ${secs} s`:`Auto Sync · al día`;
+ }
 }
-setInterval(updateLiveStatusUI,1000);
+setInterval(updateLiveStatusUI,1500);
 
 async function cloudPostAction(action,payload={}){
  if(!liveRealtimeReady())throw new Error("La sincronización en vivo requiere Netlify.");
@@ -318,7 +325,7 @@ async function cloudPostAction(action,payload={}){
  });
  let data={};
  try{data=await res.json()}catch{}
- if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar el cambio en vivo.");
+ if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar el cambio.");
  if(data.seq)setLiveCursor(data.seq);
  return data;
 }
@@ -332,7 +339,7 @@ function applyLiveProductStock(s){
  p.stock=Number(s.stock||0);
  p.reorder=Number(s.reorder||Math.max(0,Number(p.max||0)-Number(p.stock||0)));
  p.stockUpdatedAt=s.stockUpdatedAt||new Date().toISOString();
- // Mantener Sin Existencia actualizado también con eventos en vivo.
+ // Mantener Sin Existencia actualizado también con eventos.
  try{syncStockoutRecordsFromInventory("Actualización en vivo");}catch{}
  return true;
 }
@@ -416,79 +423,53 @@ function applyLiveEvent(ev){
  }
  return changed;
 }
-async function pollLiveEvents(){
- if(liveState.polling||document.visibilityState==="hidden"||!liveRealtimeReady())return false;
- liveState.polling=true;updateLiveStatusUI();
+function setCentralRevision(value){
+ const v=String(value||"");
+ if(!v)return;
+ centralRevision=v;
+ localStorage.setItem(CENTRAL_REVISION_KEY,v);
+}
+function centralUserEditing(){
+ const el=document.activeElement;
+ if(!el)return false;
+ return ["INPUT","TEXTAREA","SELECT"].includes(el.tagName)||!!el.closest?.("dialog[open]");
+}
+async function pollLiveEvents(force=false){
+ if(centralAutoChecking||document.visibilityState==="hidden"||!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
+ if(cloudSyncing||cloudSyncTimer)return false;
+ if(!force&&centralUserEditing())return false;
+ if(localChangeSerial>lastPushedSerial){queueCloudSync(250);return false;}
+ centralAutoChecking=true;updateLiveStatusUI();
  try{
-   const r=await cloudJsonp("live_events",{after:liveState.cursor,limit:100});
-   if(!r?.ok)throw new Error(r?.error||"No se pudo leer actividad en vivo.");
-   const events=Array.isArray(r.events)?r.events:[];
-   events.forEach(ev=>{applyLiveEvent(ev);setLiveCursor(ev.seq);});
-   if(!events.length&&r.cursor)setLiveCursor(r.cursor);
-   liveState.lastOk=Date.now();liveState.error="";
+   const r=await cloudJsonp("revision");
+   if(!r||!r.ok)throw new Error(r?.error||"No se pudo revisar la base central.");
+   centralLastOk=Date.now();centralLastError="";
+   const remote=String(r.revision||"");
+   if(remote&&remote!==centralRevision){
+     const sx=window.scrollX,sy=window.scrollY;
+     const ok=await syncFromCloud(true);
+     if(ok){setCentralRevision(remote);requestAnimationFrame(()=>window.scrollTo(sx,sy));}
+   }
    return true;
  }catch(err){
-   liveState.error=String(err?.message||err);
-   console.warn("Live sync:",err);
+   centralLastError=String(err?.message||err);
+   console.warn("Auto Sync central:",err);
    return false;
  }finally{
-   liveState.polling=false;updateLiveStatusUI();
+   centralAutoChecking=false;updateLiveStatusUI();
  }
 }
 async function initializeLiveSync(){
- if(!liveRealtimeReady())return false;
- try{
-   const r=await cloudJsonp("live_events",{after:-1,limit:1});
-   if(r?.ok){
-     liveState.cursor=Number(r.cursor||0)||0;
-     localStorage.setItem(LIVE_CURSOR_KEY,String(liveState.cursor));
-     liveState.lastOk=Date.now();liveState.error="";liveState.initialized=true;
-     startLivePolling();updateLiveStatusUI();return true;
-   }
- }catch(err){liveState.error=String(err?.message||err);}
- updateLiveStatusUI();return false;
+ if(!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
+ startLivePolling();
+ return pollLiveEvents(true);
 }
 function startLivePolling(){
- clearInterval(liveState.timer);
- if(!liveRealtimeReady())return;
- liveState.timer=setInterval(pollLiveEvents,LIVE_POLL_MS);
+ clearInterval(centralAutoTimer);
+ if(!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return;
+ centralAutoTimer=setInterval(()=>pollLiveEvents(false),AUTO_CENTRAL_CHECK_MS);
 }
-function stopLivePolling(){clearInterval(liveState.timer);liveState.timer=null;}
-function queueLiveDigitalUpsert(productId,delay=350){
- if(!liveRealtimeReady())return false;
- clearTimeout(liveDigitalTimers.get(productId));
- liveDigitalPending.add(productId);
- const timer=setTimeout(async()=>{
-   liveDigitalTimers.delete(productId);
-   const c=state.digitalCounts[productId];
-   const p=state.inventory.find(x=>x.id===productId);
-   if(!c||!p){liveDigitalPending.delete(productId);return;}
-   try{
-     const r=await cloudPostAction("live_digital_upsert",{
-       record:{
-         productId,
-         code:p.code||"",
-         family:p.family||"",
-         physical:c.physical,
-         obs:c.obs||"",
-         responsible:c.responsible||state.digitalFilter.responsible||"",
-         detectedAt:c.detectedAt||""
-       }
-     });
-     liveDigitalPending.delete(productId);
-     if(r.record){state.digitalCounts[productId]={...state.digitalCounts[productId],...r.record};saveLocal();refreshDigitalLiveRow(productId);}
-     liveState.lastOk=Date.now();liveState.error="";
-   }catch(err){
-     liveDigitalPending.delete(productId);
-     liveState.error=String(err?.message||err);
-     console.error(err);
-     toast("El conteo quedó local; reintentando sincronización en vivo.");
-     save();
-   }
- },delay);
- liveDigitalTimers.set(productId,timer);
- return true;
-}
+function stopLivePolling(){clearInterval(centralAutoTimer);centralAutoTimer=null;}
 
 
 function applyLiveWeeklyRecord(rec,weekLabel){
@@ -727,6 +708,8 @@ async function testCloudConnection(showToast=true){
  try{
    const r=await cloudJsonp("ping");
    if(!r||!r.ok)throw new Error(r?.error||"Respuesta inválida.");
+   if(r.revision)setCentralRevision(r.revision);
+   centralLastOk=Date.now();centralLastError="";
    cloudConfig.lastSync=new Date().toLocaleString("es-GT");
    markCloud("ok");
    await syncCentralStaff(true);
@@ -751,6 +734,8 @@ async function syncFromCloud(silent=false){
  try{
    const r=await cloudJsonp("load");
    if(!r||!r.ok)throw new Error(r?.error||"No se pudo leer la base de datos.");
+   if(r.revision)setCentralRevision(r.revision);
+   centralLastOk=Date.now();centralLastError="";
    if(r.data){
      applyCloudSnapshot(r.data);
      await syncCentralStaff(true);
@@ -782,6 +767,7 @@ async function syncToCloud(silent=false){
    return false;
  }
  if(cloudSyncing){if(!silent)toast("Ya hay una sincronización en proceso.");return false}
+ const serialAtStart=localChangeSerial;
  cloudSyncing=true;markCloud("syncing");
  try{
    const payload={action:"save",token:cloudConfig.proxy?"":cloudConfig.token,data:cloudSnapshot()};
@@ -791,25 +777,28 @@ async function syncToCloud(silent=false){
    if(cloudConfig.proxy){
      const data=await res.json();
      if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar en el servidor.");
+     if(data.revision)setCentralRevision(data.revision);
    }else{
-     // En modo directo el navegador no puede leer el POST no-cors.
-     // Verificamos después que el snapshot realmente quedó escrito.
      let confirmed=false;
      for(let attempt=0;attempt<3&&!confirmed;attempt++){
        await new Promise(r=>setTimeout(r,700+attempt*500));
        try{
          const check=await cloudJsonp("load");
          confirmed=!!(check?.ok&&check?.data?.savedAt===payload.data.savedAt);
+         if(check?.revision)setCentralRevision(check.revision);
        }catch{}
      }
      if(!confirmed)throw new Error("Google Sheets no confirmó el guardado. Revisa URL, token o implementación.");
    }
+   lastPushedSerial=Math.max(lastPushedSerial,serialAtStart);
+   centralLastOk=Date.now();centralLastError="";
    cloudConfig.lastSync=new Date().toLocaleString("es-GT");markCloud("ok");
-   if(!silent)toast("Datos guardados en la base central.");
+   if(!silent)toast("Datos guardados en Google Sheets.");
    return true;
  }catch(err){
-   console.error(err);markCloud("error");if(!silent)toast("Error al guardar en la base central.");return false;
- }finally{cloudSyncing=false}
+   centralLastError=String(err?.message||err);
+   console.error(err);markCloud("error");if(!silent)toast("Error al guardar en Google Sheets. Se reintentará automáticamente.");return false;
+ }finally{cloudSyncing=false;updateLiveStatusUI();}
 }
 
 function toast(t){let e=$("#toast");e.textContent=t;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2100)}
@@ -2501,7 +2490,7 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
    </label>
    <label class="cloud-check">
      <input id="cloudAutoSync" type="checkbox" ${cloudConfig.autoSync?"checked":""}>
-     <span><b>Sincronización automática</b><small>Los cambios se envían automáticamente después de guardarlos.</small></span>
+     <span><b>Sincronización automática con Google Sheets</b><small>Guarda cada cambio en la hoja y revisa automáticamente si otro dispositivo hizo cambios.</small></span>
    </label>
 
    <div class="cloud-actions">
@@ -2514,7 +2503,7 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
 
    <div class="cloud-help">
      <b>Instalación inicial</b>
-     <p>El sistema usa Google Sheets como fuente central. Además de <strong>BASE_PRODUCTOS</strong>, ahora usa <strong>BASE_TECNICOS</strong> y <strong>BASE_BODEGUEROS</strong>. Para Netlify usa la carpeta <strong>netlify/functions</strong> incluida: así la URL y el Token se guardan como variables del servidor y no se pierden al limpiar el navegador.</p>
+     <p>Google Sheets vuelve a ser la base central. Cada dispositivo guarda sus cambios automáticamente y revisa la base central cada pocos segundos. No usa modo “tiempo real” ni consultas continuas agresivas. La copia local sirve como respaldo si se cae Internet.</p>
    </div>
  </div>
 
@@ -2634,7 +2623,7 @@ function bind(){
       applyLiveMovementDelete(m.id,r.deletedAt||new Date().toISOString());
       if(r.product)applyLiveProductStock(r.product);
       saveLocal();render();toast("Salida eliminada en vivo e inventario restaurado.");
-    }catch(err){toast(err?.message||"No se pudo eliminar la salida en vivo.");}
+    }catch(err){toast(err?.message||"No se pudo eliminar la salida.");}
     return;
   }
   const p=itemForMovement(m);
@@ -2661,7 +2650,7 @@ function bind(){
       m.orderLocked=false;
       if(liveRealtimeReady()){
         try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber||"",orderLocked:false,status:m.status||"Descargado"}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
-        catch(err){toast(err?.message||"No se pudo desbloquear en vivo.");return;}
+        catch(err){toast(err?.message||"No se pudo desbloquear.");return;}
       }else save();
       render();
 
@@ -2680,7 +2669,7 @@ function bind(){
       m.orderLocked=true;
       if(liveRealtimeReady()){
         try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber||"",orderLocked:true,status:m.status||"Descargado"}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
-        catch(err){toast(err?.message||"No se pudo bloquear en vivo.");return;}
+        catch(err){toast(err?.message||"No se pudo bloquear.");return;}
       }else save();
       render();
       toast("N. de Orden bloqueado.");
@@ -2719,7 +2708,7 @@ function bind(){
       updateStatus();
       if(liveRealtimeReady()){
         try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:m.orderNumber,orderLocked:true,status:m.status}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
-        catch(err){toast(err?.message||"No se pudo guardar el N. de Orden en vivo.");return;}
+        catch(err){toast(err?.message||"No se pudo guardar el N. de Orden.");return;}
       }else save();
       render();
       toast("N. de Orden guardado y bloqueado.");
@@ -2728,7 +2717,7 @@ function bind(){
       updateStatus();
       if(liveRealtimeReady()){
         try{const r=await cloudPostAction("live_movement_patch",{movementId:m.id,patch:{orderNumber:"",orderLocked:false,status:m.status}});if(r.movement)applyLiveMovementUpsert(r.movement);saveLocal();}
-        catch(err){toast(err?.message||"No se pudo actualizar el N. de Orden en vivo.");}
+        catch(err){toast(err?.message||"No se pudo actualizar el N. de Orden.");}
       }else save();
     }
   };
@@ -2756,8 +2745,8 @@ function bindExit(){let f=$("#exitForm");if(!f)return;let inp=$("#exitCode"),box
        const r=await cloudPostAction("live_movement_create",{movement});
        if(r.movement)applyLiveMovementUpsert(r.movement);
        if(r.product)applyLiveProductStock(r.product);
-       saveLocal();toast("Salida registrada en vivo.");render();
-     }catch(err){toast(err?.message||"No se pudo registrar la salida en vivo.");}
+       saveLocal();toast("Salida registrada.");render();
+     }catch(err){toast(err?.message||"No se pudo registrar la salida.");}
      return;
    }
    p.stock-=q;p.reorder=Math.max(0,(+p.max||0)-p.stock);p.stockUpdatedAt=new Date().toISOString();syncStockoutRecordsFromInventory("Control de Salida");movement.createdAt=new Date().toISOString();movement.updatedAt=movement.createdAt;state.movements.push(movement);save();toast("Salida registrada.");render();
@@ -4216,8 +4205,8 @@ $("#editQtyForm").onsubmit=async e=>{
  const raw=$("#eqQty").value.trim(),n=+raw,old=+m.qty,current=+p.stock,max=current+old;
  if(raw===""||!Number.isInteger(n)||n<1)return toast("Cantidad inválida.");if(n>max)return toast(`Máximo permitido: ${max}`);
  if(liveRealtimeReady()){
-   try{const r=await cloudPostAction("live_movement_qty",{movementId:m.id,qty:n});if(r.movement)applyLiveMovementUpsert(r.movement);if(r.product)applyLiveProductStock(r.product);saveLocal();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada en vivo.");}
-   catch(err){toast(err?.message||"No se pudo actualizar la salida en vivo.");}
+   try{const r=await cloudPostAction("live_movement_qty",{movementId:m.id,qty:n});if(r.movement)applyLiveMovementUpsert(r.movement);if(r.product)applyLiveProductStock(r.product);saveLocal();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada.");}
+   catch(err){toast(err?.message||"No se pudo actualizar la salida.");}
    return;
  }
  p.stock=current+old-n;p.reorder=Math.max(0,(+p.max||0)-p.stock);p.stockUpdatedAt=new Date().toISOString();syncStockoutRecordsFromInventory("Edición de Salida");m.qty=n;m.updatedAt=new Date().toISOString();save();$("#editQtyDialog").close();editingMovementId=null;render();toast("Cantidad actualizada e inventario ajustado.");
@@ -4260,8 +4249,11 @@ document.addEventListener("click",()=>{
 });
 window.addEventListener("online",()=>{
  if(cloudConfig.enabled&&cloudReady()){
-   if(liveRealtimeReady()){initializeLiveSync();}
-   if(cloudConfig.autoSync)queueCloudSync(350);
+   if(cloudConfig.autoSync){
+     if(localChangeSerial>lastPushedSerial)queueCloudSync(350);
+     else pollLiveEvents(true);
+     startLivePolling();
+   }
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(350);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(350);
    if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),500);
@@ -4270,8 +4262,11 @@ window.addEventListener("online",()=>{
 document.addEventListener("visibilitychange",()=>{
  if(document.visibilityState==="hidden")stopLivePolling();
  if(document.visibilityState==="visible"&&cloudConfig.enabled&&cloudReady()){
-   if(liveRealtimeReady()){pollLiveEvents();startLivePolling();}
-   if(cloudConfig.autoSync)queueCloudSync(600);
+   if(cloudConfig.autoSync){
+     if(localChangeSerial>lastPushedSerial)queueCloudSync(300);
+     else pollLiveEvents(true);
+     startLivePolling();
+   }
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(600);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(600);
    if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),700);
