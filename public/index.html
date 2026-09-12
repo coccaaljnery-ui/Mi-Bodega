@@ -24,6 +24,7 @@
       <button class="nav" data-page="diferencias"><span>≠</span>Diferencias</button>
       <button class="nav" data-page="sinexist"><span>!</span>Sin Exist.</button>
       <button class="nav" data-page="digital"><span>▤</span>Inventario Digital</button>
+      <button class="nav" data-page="familias"><span>✓</span>Familias Contadas <span class="nav-badge" id="familiesCountBadge">0</span></button>
       <button class="nav" data-page="herramientas"><span>⚒</span>Herramientas</button>
       <button class="nav" data-page="nuevos"><span>✦</span>Códigos Nuevos</button>
       <button class="nav" data-page="config"><span>⚙</span>Configuración</button>
@@ -192,6 +193,24 @@
     <div class="dialog-actions">
       <button type="button" class="btn tonal" data-close="digitalResponsibleDialog">Cancelar</button>
       <button class="btn primary" type="submit">Asignar responsable</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="securityLoginDialog" class="security-login-dialog">
+  <form id="securityLoginForm" class="dialog-card security-login-card">
+    <div class="dialog-head">
+      <div><small>V80 · Acceso seguro</small><h2>Ingresar a Mi Bodega</h2></div>
+    </div>
+    <div class="security-shield">🔐</div>
+    <p class="hint">Este dispositivo necesita el PIN configurado en Netlify para conectarse con Google Sheets. El PIN no se guarda en el navegador.</p>
+    <label>PIN de acceso
+      <input id="securityPin" type="password" autocomplete="current-password" placeholder="Ingresa el PIN" required>
+    </label>
+    <div id="securityLoginMessage" class="security-login-message" aria-live="polite"></div>
+    <div class="dialog-actions security-login-actions">
+      <button type="button" class="btn tonal" id="securityLocalOnly">Continuar solo local</button>
+      <button class="btn primary" type="submit" id="securityLoginSubmit">Entrar y sincronizar</button>
     </div>
   </form>
 </dialog>

@@ -17,6 +17,12 @@ if(DEPLOY_CONFIG.enabled&&DEPLOY_CONFIG.apiUrl){
  cloudConfig.enabled=true;
  if(DEPLOY_CONFIG.token)cloudConfig.token=String(DEPLOY_CONFIG.token);
 }
+// V80: en modo Proxy el Token pertenece únicamente a Netlify. Eliminar cualquier
+// copia heredada de versiones antiguas que pudiera quedar en localStorage.
+if(cloudConfig.proxy&&cloudConfig.token){
+ cloudConfig.token="";
+ localStorage.setItem("b34_cloud_config",JSON.stringify(cloudConfig));
+}
 let cloudSyncTimer=null,cloudSyncing=false,cloudLoading=false;
 const AUTO_CENTRAL_CHECK_MS=6000;
 const CENTRAL_REVISION_KEY="b34_central_revision";
@@ -24,6 +30,112 @@ let centralRevision=localStorage.getItem(CENTRAL_REVISION_KEY)||"";
 let centralAutoTimer=null,centralAutoChecking=false;
 let localChangeSerial=0,lastPushedSerial=0;
 let centralLastOk=0,centralLastError="";
+const authState={
+ required:!!cloudConfig.proxy,
+ configured:null,
+ securityConfigured:null,
+ authenticated:!cloudConfig.proxy,
+ checking:false,
+ localOnly:false,
+ lastError:""
+};
+function setSecurityMessage(message="",isError=false){
+ const el=document.querySelector("#securityLoginMessage");
+ if(!el)return;
+ el.textContent=String(message||"");
+ el.classList.toggle("error",!!isError);
+}
+function openSecurityLogin(message="",force=false){
+ if(!cloudConfig.proxy)return;
+ if(authState.localOnly&&!force)return;
+ if(force)authState.localOnly=false;
+ const dlg=document.querySelector("#securityLoginDialog");
+ if(message)setSecurityMessage(message,true);
+ if(dlg&&!dlg.open){try{dlg.showModal();}catch{dlg.setAttribute("open","");}}
+ setTimeout(()=>document.querySelector("#securityPin")?.focus(),40);
+}
+function closeSecurityLogin(){
+ const dlg=document.querySelector("#securityLoginDialog");
+ if(dlg?.open)dlg.close();
+}
+function handleCloudUnauthorized(data={}){
+ authState.authenticated=false;
+ authState.securityConfigured=data?.securityConfigured!==false;
+ authState.lastError=String(data?.error||"Sesión no iniciada.");
+ if(cloudConfig.proxy&&!authState.localOnly)setTimeout(()=>openSecurityLogin(authState.lastError),0);
+}
+async function checkServerAuth(silent=true){
+ if(authState.localOnly)return false;
+ if(!cloudConfig.proxy||!cloudConfig.enabled||!cloudReady()){authState.authenticated=!cloudConfig.proxy;return !cloudConfig.proxy;}
+ if(authState.checking)return authState.authenticated;
+ authState.checking=true;
+ try{
+   const u=new URL(normalizeCloudUrl(cloudConfig.url),location.href);
+   u.searchParams.set("action","auth_status");u.searchParams.set("_",Date.now());
+   const res=await fetch(u.toString(),{method:"GET",cache:"no-store",credentials:"same-origin"});
+   const data=await res.json();
+   authState.configured=!!data.configured;
+   authState.securityConfigured=!!data.securityConfigured;
+   authState.authenticated=!!data.authenticated;
+   authState.lastError="";
+   if(!authState.configured){
+     authState.lastError="Netlify no tiene configurada la conexión con Google Sheets.";
+     if(!silent)toast(authState.lastError);
+     return false;
+   }
+   if(!authState.securityConfigured){
+     authState.lastError="V80 requiere BODEGA_ACCESS_PIN en Netlify antes de habilitar la base central.";
+     openSecurityLogin(authState.lastError);
+     return false;
+   }
+   if(!authState.authenticated){
+     if(!silent)toast("Ingresa el PIN de Mi Bodega.");
+     openSecurityLogin("Ingresa el PIN para conectar este dispositivo con Google Sheets.");
+     return false;
+   }
+   closeSecurityLogin();
+   return true;
+ }catch(err){
+   authState.lastError=String(err?.message||err);
+   if(!silent)toast("No se pudo validar la sesión segura de Netlify.");
+   return false;
+ }finally{authState.checking=false;}
+}
+async function loginServerPin(pin){
+ if(!cloudConfig.proxy)throw new Error("El PIN seguro se usa únicamente con Netlify.");
+ const res=await fetch(normalizeCloudUrl(cloudConfig.url),{
+   method:"POST",credentials:"same-origin",cache:"no-store",
+   headers:{"Content-Type":"text/plain;charset=utf-8"},
+   body:JSON.stringify({action:"login",pin:String(pin||"")})
+ });
+ let data={};try{data=await res.json()}catch{}
+ if(!res.ok||!data?.ok){handleCloudUnauthorized(data);throw new Error(data?.error||"No se pudo iniciar sesión.");}
+ authState.authenticated=true;authState.configured=true;authState.securityConfigured=true;authState.localOnly=false;authState.lastError="";
+ closeSecurityLogin();
+ return true;
+}
+async function logoutServerSession(){
+ if(!cloudConfig.proxy)return;
+ authState.localOnly=false;
+ try{await fetch(normalizeCloudUrl(cloudConfig.url),{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"logout"})});}catch{}
+ authState.authenticated=false;
+ stopLivePolling();
+ openSecurityLogin("Sesión cerrada. Ingresa el PIN para volver a sincronizar.");
+}
+async function resumeCentralSyncAfterAuth(){
+ if(!cloudConfig.enabled||!cloudReady())return false;
+ authState.localOnly=false;
+ await syncFromCloud(true);
+ await recoverDifferenceHistoryFromSheets(true);
+ await recoverWeeklyHistoryList(true);
+ await recoverDigitalHistoryList(true);
+ await initializeLiveSync();
+ if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(700);
+ if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),850);
+ if(pendingDigitalArchiveCount())setTimeout(()=>syncDigitalArchiveQueue(false),1000);
+ if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(1300);
+ return true;
+}
 const state={
  page:"inicio",
  inventory:get("b34_inventory",DEFAULT_PRODUCTS),
@@ -34,6 +146,8 @@ const state={
  weeklyMeta:get("b34_weekly_meta",{active:false,label:"",responsible:"",closed:false,filterFamily:"",dateFrom:"",dateTo:"",productIds:[],extraProducts:[]}),
  weeklyHistoryMeta:get("b34_weekly_history_meta",[]),
  weeklyArchiveQueue:get("b34_weekly_archive_queue",[]),
+ digitalHistory:get("b34_digital_history",[]),
+ digitalArchiveQueue:get("b34_digital_archive_queue",[]),
  digitalCounts:get("b34_digital_counts",{}),
  digitalFilter:get("b34_digital_filter",{family:"",search:"",field:"name",condition:"none",value1:"",value2:"",responsible:""}),
  digitalClosedFamilies:get("b34_digital_closed_families",{}),
@@ -54,6 +168,8 @@ if(typeof state.weeklyMeta.responsible!=="string")state.weeklyMeta.responsible="
 if(!Array.isArray(state.weeklyMeta.extraProducts))state.weeklyMeta.extraProducts=[];
 if(!Array.isArray(state.weeklyHistoryMeta))state.weeklyHistoryMeta=[];
 if(!Array.isArray(state.weeklyArchiveQueue))state.weeklyArchiveQueue=[];
+if(!Array.isArray(state.digitalHistory))state.digitalHistory=[];
+if(!Array.isArray(state.digitalArchiveQueue))state.digitalArchiveQueue=[];
 if(typeof state.settings.logoDataUrl!=="string")state.settings.logoDataUrl="";
 if(typeof state.digitalFilter.responsible!=="string")state.digitalFilter.responsible="";
 if(!Array.isArray(state.differenceHistory))state.differenceHistory=[];
@@ -64,18 +180,38 @@ if(!Array.isArray(state.stockoutRecords))state.stockoutRecords=[];
 if(!state.movementTombstones||typeof state.movementTombstones!=="object")state.movementTombstones={};
 if(typeof state.inventoryVersionAt!=="string")state.inventoryVersionAt="";
 if(typeof state.digitalResetAt!=="string")state.digitalResetAt="";
+migrateLegacyDigitalHistoryStorage();
+normalizeCatalogFields();
 ensureMasterImportOrder();
 syncStockoutRecordsFromInventory("Migración");
 localStorage.setItem("b34_stockout_records",JSON.stringify(state.stockoutRecords));
 let editingProductId=null,currentProductId=null,currentMovementId=null,editingMovementId=null;
+let digitalCalcTargetId="",digitalCalcDisplay="0",digitalCalcStored=null,digitalCalcOp=null,digitalCalcWaiting=false;
 let differenceView="open";
+let digitalView="current";
+let digitalFamiliesPageView="families";
+let digitalHistorySelectedId="";
+let digitalHistoryLoadedArchive=null,digitalHistoryLoadingId="";
+const digitalHistoryCache=new Map();
 let weeklyView="current";
 let weeklyHistorySelectedId="";
 let weeklyHistoryLoadedArchive=null;
 let weeklyHistoryLoading=false;
-const titles={inicio:"Inicio",inventario:"Inventario",salida:"Control de Salida",conteo:"Conteo Semanal",diferencias:"Diferencias",sinexist:"Sin Existencia",digital:"Inventario Digital",herramientas:"Herramientas",nuevos:"Códigos Nuevos",config:"Configuración"};
+const titles={inicio:"Inicio",inventario:"Inventario",salida:"Control de Salida",conteo:"Conteo Semanal",diferencias:"Diferencias",sinexist:"Sin Existencia",digital:"Inventario Digital",familias:"Familias Contadas",herramientas:"Herramientas",nuevos:"Códigos Nuevos",config:"Configuración"};
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 function esc(v=""){return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+function catalogText(v){
+ return v===null||v===undefined?"":String(v);
+}
+function normalizeCatalogFields(){
+ if(Array.isArray(state.inventory))state.inventory.forEach(p=>{if(p)p.catalog=catalogText(p.catalog);});
+ if(Array.isArray(state.pendingBaseProducts))state.pendingBaseProducts.forEach(p=>{if(p)p.catalog=catalogText(p.catalog);});
+ if(Array.isArray(state.differenceHistory))state.differenceHistory.forEach(r=>{if(r)r.catalog=catalogText(r.catalog);});
+ if(Array.isArray(state.digitalHistory))state.digitalHistory.forEach(a=>{if(a&&Array.isArray(a.items))a.items.forEach(r=>{if(r)r.catalog=catalogText(r.catalog);});});
+ if(Array.isArray(state.digitalArchiveQueue))state.digitalArchiveQueue.forEach(a=>{if(a&&Array.isArray(a.items))a.items.forEach(r=>{if(r)r.catalog=catalogText(r.catalog);});});
+ if(Array.isArray(state.stockoutRecords))state.stockoutRecords.forEach(r=>{if(r)r.catalog=catalogText(r.catalog);});
+ if(state.weeklyMeta&&Array.isArray(state.weeklyMeta.extraProducts))state.weeklyMeta.extraProducts.forEach(p=>{if(p)p.catalog=catalogText(p.catalog);});
+}
 function saveCloudConfig(){
  localStorage.setItem("b34_cloud_config",JSON.stringify(cloudConfig));
 }
@@ -91,6 +227,8 @@ function saveLocal(){
  localStorage.setItem("b34_digital_counts",JSON.stringify(state.digitalCounts));
  localStorage.setItem("b34_digital_filter",JSON.stringify(state.digitalFilter));
  localStorage.setItem("b34_digital_closed_families",JSON.stringify(state.digitalClosedFamilies));
+ localStorage.setItem("b34_digital_history",JSON.stringify(state.digitalHistory));
+ localStorage.setItem("b34_digital_archive_queue",JSON.stringify(state.digitalArchiveQueue));
  localStorage.setItem("b34_digital_adjustments",JSON.stringify(state.digitalAdjustments));
  localStorage.setItem("b34_difference_history",JSON.stringify(state.differenceHistory));
  localStorage.setItem("b34_pending_base_products",JSON.stringify(state.pendingBaseProducts));
@@ -104,12 +242,12 @@ function save(){
  saveLocal();
  if(!cloudLoading){
    localChangeSerial++;
-   if(cloudConfig.enabled&&cloudConfig.autoSync&&cloudReady()) queueCloudSync(900);
+   if(!authState.localOnly&&cloudConfig.enabled&&cloudConfig.autoSync&&cloudReady()) queueCloudSync(900);
  }
 }
 function cloudSnapshot(){
  return {
-   version:"V69 GOOGLE SHEETS AUTOSYNC ESTABLE",
+   version:"V80 FINAL SEGURA",
    savedAt:new Date().toISOString(),
    inventory:state.inventory,
    movements:state.movements,
@@ -121,6 +259,7 @@ function cloudSnapshot(){
    digitalCounts:state.digitalCounts,
    digitalFilter:state.digitalFilter,
    digitalClosedFamilies:state.digitalClosedFamilies,
+   digitalHistory:state.digitalHistory,
    digitalAdjustments:state.digitalAdjustments,
    differenceHistory:state.differenceHistory,
    pendingBaseProducts:state.pendingBaseProducts,
@@ -134,7 +273,7 @@ function applyCloudSnapshot(data){
  if(!data||typeof data!=="object")return false;
  cloudLoading=true;
  try{
-   if(Array.isArray(data.inventory)){state.inventory=data.inventory;ensureMasterImportOrder();state.inventory=orderedProducts(state.inventory);}
+   if(Array.isArray(data.inventory)){state.inventory=data.inventory;normalizeCatalogFields();ensureMasterImportOrder();state.inventory=orderedProducts(state.inventory);}
    if(Array.isArray(data.movements))state.movements=data.movements;
    if(Array.isArray(data.counts))state.counts=data.counts;
    if(data.weeklyCounts&&typeof data.weeklyCounts==="object"){
@@ -158,6 +297,7 @@ function applyCloudSnapshot(data){
    if(data.digitalCounts&&typeof data.digitalCounts==="object")state.digitalCounts=data.digitalCounts;
    if(data.digitalFilter&&typeof data.digitalFilter==="object")state.digitalFilter=data.digitalFilter;
    if(data.digitalClosedFamilies&&typeof data.digitalClosedFamilies==="object")state.digitalClosedFamilies=data.digitalClosedFamilies;
+   if(Array.isArray(data.digitalHistory))mergeDigitalHistoryRemote(data.digitalHistory);
    if(Array.isArray(data.digitalAdjustments))state.digitalAdjustments=data.digitalAdjustments;
    if(Array.isArray(data.differenceHistory))mergeDifferenceHistoryRemote(data.differenceHistory);
    if(Array.isArray(data.pendingBaseProducts))state.pendingBaseProducts=data.pendingBaseProducts;
@@ -171,6 +311,7 @@ function applyCloudSnapshot(data){
    if(!Array.isArray(state.weeklyMeta.extraProducts))state.weeklyMeta.extraProducts=[];
    if(typeof state.digitalFilter.responsible!=="string")state.digitalFilter.responsible="";
 
+   normalizeCatalogFields();
    saveLocal();
    return true;
  }finally{
@@ -201,6 +342,7 @@ function cloudReady(){
  return !!(normalizeCloudUrl(cloudConfig.url)&&(cloudConfig.proxy||String(cloudConfig.token||"").trim()));
 }
 function cloudStatusLabel(){
+ if(authState.localOnly)return "Solo local · sesión actual";
  if(!cloudConfig.enabled)return "Modo local";
  if(cloudConfig.status==="syncing")return "Sincronizando...";
  if(cloudConfig.status==="ok")return cloudConfig.lastSync?`Sincronizado · ${cloudConfig.lastSync}`:"Conectado";
@@ -226,6 +368,7 @@ function markCloud(status){
  updateCloudStatusUI();
 }
 function queueCloudSync(delay=900){
+ if(authState.localOnly)return;
  clearTimeout(cloudSyncTimer);
  cloudSyncTimer=setTimeout(async()=>{
    cloudSyncTimer=null;
@@ -237,6 +380,7 @@ function queueCloudSync(delay=900){
  },delay);
 }
 async function cloudJsonp(action,params={}){
+ if(authState.localOnly)throw new Error("Modo local temporal activo. Ingresa el PIN para volver a sincronizar.");
  if(!cloudReady())throw new Error(cloudConfig.proxy?"Falta la conexión del servidor.":"Falta URL o token de Google Sheets.");
  const base=normalizeCloudUrl(cloudConfig.url);
  if(cloudConfig.proxy){
@@ -244,8 +388,10 @@ async function cloudJsonp(action,params={}){
    u.searchParams.set("action",action);
    Object.entries(params||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)u.searchParams.set(k,String(v))});
    u.searchParams.set("_",Date.now());
-   const res=await fetch(u.toString(),{method:"GET",cache:"no-store"});
+   const res=await fetch(u.toString(),{method:"GET",cache:"no-store",credentials:"same-origin"});
    const data=await res.json();
+   if(res.status===401){handleCloudUnauthorized(data);throw new Error(data?.error||"Debes iniciar sesión en Mi Bodega.");}
+   if(res.status===503&&data?.securityRequired){handleCloudUnauthorized(data);throw new Error(data?.error||"Seguridad de Netlify no configurada.");}
    if(!res.ok)throw new Error(data?.error||"Error del servidor Netlify.");
    return data;
  }
@@ -298,7 +444,7 @@ function setLiveCursor(v){
 function updateLiveStatusUI(){
  const pill=$("#liveStatusPill"),txt=$("#liveStatusText");
  if(!pill||!txt)return;
- const show=!!(cloudConfig.enabled&&cloudReady()&&cloudConfig.autoSync);
+ const show=!!(!authState.localOnly&&cloudConfig.enabled&&cloudReady()&&cloudConfig.autoSync);
  pill.hidden=!show;
  if(!show)return;
  pill.classList.remove("ok","syncing","error");
@@ -321,7 +467,8 @@ async function cloudPostAction(action,payload={}){
    method:"POST",
    headers:{"Content-Type":"text/plain;charset=utf-8"},
    body:JSON.stringify(body),
-   cache:"no-store"
+   cache:"no-store",
+   credentials:"same-origin"
  });
  let data={};
  try{data=await res.json()}catch{}
@@ -435,7 +582,7 @@ function centralUserEditing(){
  return ["INPUT","TEXTAREA","SELECT"].includes(el.tagName)||!!el.closest?.("dialog[open]");
 }
 async function pollLiveEvents(force=false){
- if(centralAutoChecking||document.visibilityState==="hidden"||!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
+ if(authState.localOnly||centralAutoChecking||document.visibilityState==="hidden"||!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
  if(cloudSyncing||cloudSyncTimer)return false;
  if(!force&&centralUserEditing())return false;
  if(localChangeSerial>lastPushedSerial){queueCloudSync(250);return false;}
@@ -460,13 +607,13 @@ async function pollLiveEvents(force=false){
  }
 }
 async function initializeLiveSync(){
- if(!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return false;
  startLivePolling();
  return pollLiveEvents(true);
 }
 function startLivePolling(){
  clearInterval(centralAutoTimer);
- if(!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudConfig.autoSync||!cloudReady())return;
  centralAutoTimer=setInterval(()=>pollLiveEvents(false),AUTO_CENTRAL_CHECK_MS);
 }
 function stopLivePolling(){clearInterval(centralAutoTimer);centralAutoTimer=null;}
@@ -583,6 +730,7 @@ function pendingDifferenceSyncCount(){
  return (state.differenceHistory||[]).filter(r=>r&&r.needsSync!==false).length;
 }
 function scheduleDifferenceHistorySync(delay=700){
+ if(authState.localOnly)return;
  clearTimeout(differenceHistorySyncTimer);
  differenceHistorySyncTimer=setTimeout(()=>syncDifferenceHistoryQueue(false),delay);
 }
@@ -601,7 +749,7 @@ async function syncDifferenceHistoryQueue(blocking=false){
  if(differenceHistorySyncing)return false;
  const pending=(state.differenceHistory||[]).filter(r=>r&&r.needsSync!==false);
  if(!pending.length)return true;
- if(!cloudConfig.enabled||!cloudReady())return false;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudReady())return false;
 
  differenceHistorySyncing=true;
  let ok=true;
@@ -772,10 +920,11 @@ async function syncToCloud(silent=false){
  try{
    const payload={action:"save",token:cloudConfig.proxy?"":cloudConfig.token,data:cloudSnapshot()};
    const opts={method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)};
-   if(!cloudConfig.proxy)opts.mode="no-cors";
+   if(cloudConfig.proxy)opts.credentials="same-origin"; else opts.mode="no-cors";
    const res=await fetch(normalizeCloudUrl(cloudConfig.url),opts);
    if(cloudConfig.proxy){
      const data=await res.json();
+     if(res.status===401){handleCloudUnauthorized(data);throw new Error(data?.error||"Debes iniciar sesión en Mi Bodega.");}
      if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar en el servidor.");
      if(data.revision)setCentralRevision(data.revision);
    }else{
@@ -793,6 +942,7 @@ async function syncToCloud(silent=false){
    lastPushedSerial=Math.max(lastPushedSerial,serialAtStart);
    centralLastOk=Date.now();centralLastError="";
    cloudConfig.lastSync=new Date().toLocaleString("es-GT");markCloud("ok");
+   if(pendingDigitalArchiveCount())setTimeout(()=>syncDigitalArchiveQueue(false),250);
    if(!silent)toast("Datos guardados en Google Sheets.");
    return true;
  }catch(err){
@@ -894,7 +1044,22 @@ function nextMasterImportOrder(){
  return state.inventory.reduce((m,p)=>Math.max(m,normalizeMasterOrderValue(p.importOrder,0)),0)+1;
 }
 function status(p){if(+p.stock===0)return '<span class="chip zero">Sin existencia</span>';if(+p.stock<=+p.min)return '<span class="chip low">Stock bajo</span>';return '<span class="chip ok">Disponible</span>'}
-function calc(){return{products:state.inventory.length,units:state.inventory.reduce((a,p)=>a+(+p.stock||0),0),low:state.inventory.filter(p=>p.stock>0&&p.stock<=p.min).length,zero:state.inventory.filter(p=>+p.stock===0).length,diffs:state.counts.filter(c=>c.diff!==0).length}}
+function dashboardDifferenceCount(){
+ const keys=new Set();
+ (state.differenceHistory||[]).forEach(rec=>{
+   if(!differenceRecordOpen(rec))return;
+   const key=String(rec.productId||normalizeImportCode(rec.code)||rec.id||"").trim();
+   if(key)keys.add(key);
+ });
+ state.inventory.forEach(p=>{
+   const c=state.digitalCounts?.[p.id];
+   if(!c||c.physical===""||c.physical===null||c.physical===undefined)return;
+   if(digitalDiff(p,c.physical)===0)return;
+   keys.add(String(p.id||normalizeImportCode(p.code)||""));
+ });
+ return keys.size;
+}
+function calc(){return{products:state.inventory.length,units:state.inventory.reduce((a,p)=>a+(+p.stock||0),0),low:state.inventory.filter(p=>p.stock>0&&p.stock<=p.min).length,zero:state.inventory.filter(p=>+p.stock===0).length,diffs:dashboardDifferenceCount()}}
 function productByCode(c){let q=String(c||"").trim().toLowerCase();return state.inventory.find(p=>String(p.code).trim().toLowerCase()===q)}
 function options(arr){return arr.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("")}
 function productRows(items=state.inventory){
@@ -974,7 +1139,14 @@ function movementTable(){
 }
 function renderInicio(){
  let s=calc();return `<div class="hero"><section class="hero-a"><div><small>RESUMEN DE HOY</small><h2>Todo tu inventario, claro y rápido.</h2><p>Controla existencias, registra salidas y detecta diferencias desde el celular o la computadora.</p></div><div class="actions"><button class="btn primary" data-go="salida">⇥ Registrar salida</button><button class="btn tonal" data-new-product>＋ Nuevo producto</button></div></section><section class="hero-b"><div><small>UNIDADES DISPONIBLES</small><div class="big">${s.units}</div></div><small>${s.products} productos registrados · ${s.low} con stock bajo</small></section></div>
- <div class="stats"><div class="stat">▣<b>${s.products}</b><small>Productos registrados</small></div><div class="stat">△<b>${s.low}</b><small>Stock bajo</small></div><div class="stat">!<b>${s.zero}</b><small>Sin existencia</small></div><div class="stat">≠<b>${s.diffs}</b><small>Diferencias</small></div></div>
+ <div class="stats dashboard-stats">
+   <div class="stat"><span class="stat-icon">▣</span><b>${s.products}</b><small>Productos registrados</small></div>
+   <div class="stat"><span class="stat-icon">△</span><b>${s.low}</b><small>Stock bajo</small></div>
+   <div class="stat"><span class="stat-icon">!</span><b>${s.zero}</b><small>Sin existencia</small></div>
+   <button type="button" class="stat stat-action stat-differences ${s.diffs>0?"has-pending":"is-clear"}" data-go="diferencias" aria-label="Abrir diferencias de Inventario Digital">
+     <span class="stat-icon">≠</span><b>${s.diffs}</b><small>Diferencias pendientes</small><span class="stat-cta">${s.diffs>0?"Revisar pendientes →":"Sin pendientes · Ver historial →"}</span>
+   </button>
+ </div>
  <section class="panel attention-panel"><div class="panel-head"><div><h2>Productos que requieren atención</h2><p>Stock bajo o sin existencia.</p></div><button class="btn tonal" data-go="inventario">Ver inventario</button></div>${inventoryTable(state.inventory.filter(p=>+p.stock<=+p.min))}</section>`
 }
 function renderInventario(items=state.inventory){items=orderedProducts(items);return `<section class="panel inventory-panel"><div class="panel-head"><div><h2>Inventario actual</h2><p>${items.length} productos visibles.</p></div><button class="btn primary" data-new-product>＋ Agregar</button></div>${inventoryTable(items)}</section>`}
@@ -1136,11 +1308,12 @@ async function saveWeeklyArchiveToSheets(archive){
    headers:{"Content-Type":"text/plain;charset=utf-8"},
    body:JSON.stringify(payload)
  };
- if(!cloudConfig.proxy)opts.mode="no-cors";
+ if(cloudConfig.proxy)opts.credentials="same-origin"; else opts.mode="no-cors";
 
  const res=await fetch(normalizeCloudUrl(cloudConfig.url),opts);
  if(cloudConfig.proxy){
    const data=await res.json();
+   if(res.status===401){handleCloudUnauthorized(data);throw new Error(data?.error||"Debes iniciar sesión en Mi Bodega.");}
    if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar el historial semanal.");
  }
 
@@ -1154,7 +1327,7 @@ async function saveWeeklyArchiveToSheets(archive){
 }
 async function syncWeeklyArchiveQueue(blocking=false){
  if(!state.weeklyArchiveQueue.length)return true;
- if(!cloudConfig.enabled||!cloudReady())return false;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudReady())return false;
 
  const queue=[...state.weeklyArchiveQueue];
  for(const archive of queue){
@@ -1460,7 +1633,9 @@ function weeklyCountRows(items=weeklyFilteredProducts()){
    const confirmTitle=c.confirmed
      ? `Confirmado${c.confirmedBy?` por ${c.confirmedBy}`:""}${c.confirmedAt?` · ${new Date(c.confirmedAt).toLocaleString("es-GT")}`:""}. Desmarca para editar.`
      : "Solo se puede confirmar cuando Físico coincide con Existencia.";
-   return `<tr class="${c.confirmed?"weekly-row-confirmed":""}" data-weekly-row="${p.id}">
+   const hasPhysical=c.physical!==""&&c.physical!==null&&c.physical!==undefined;
+   const rowClasses=[c.confirmed?"weekly-row-confirmed":"",hasPhysical?"weekly-row-counted":""].filter(Boolean).join(" ");
+   return `<tr class="${rowClasses}" data-weekly-row="${p.id}">
      <td><b>${esc(p.code)}</b></td>
      <td>${p.weeklyOnly?`<input class="weekly-meta-input" data-weekly-extra-field="catalog" data-weekly-extra-id="${p.id}" value="${esc(p.catalog||"")}" placeholder="Catálogo (opcional)" ${disabled}>`:esc(p.catalog||"—")}</td>
      <td>${p.weeklyOnly?`<input class="weekly-meta-input weekly-desc-input" data-weekly-extra-field="name" data-weekly-extra-id="${p.id}" value="${esc(p.name==="Código no registrado"?"":p.name)}" placeholder="Descripción" ${disabled}>`:esc(p.name)}</td>
@@ -1564,6 +1739,421 @@ function renderConteo(){
    </table></div>
  </section>`;
 }
+function digitalArchiveChecksum(items){
+ return weeklyArchiveHash(JSON.stringify((items||[]).map(i=>[
+   i.productId||"",i.code||"",catalogText(i.catalog),i.name||"",i.family||"",
+   Number(i.expected||0),i.physical===""?"":Number(i.physical),
+   i.difference===""||i.difference===null||i.difference===undefined?"":Number(i.difference),
+   i.status||"",i.obs||"",i.countedAt||""
+ ])));
+}
+function digitalArchiveMeta(archive,needsSync=false){
+ if(!archive)return null;
+ const items=Array.isArray(archive.items)?archive.items:[];
+ const counted=Number(archive.counted??items.length??0)||0;
+ const differences=Number(archive.differences??items.filter(i=>Number(i.difference||0)!==0).length)||0;
+ return {
+   id:String(archive.id||""),
+   sessionId:String(archive.sessionId||archive.id||""),
+   family:String(archive.family||"Sin familia"),
+   responsible:String(archive.responsible||"—"),
+   archivedAt:String(archive.archivedAt||archive.updatedAt||""),
+   updatedAt:String(archive.updatedAt||archive.archivedAt||""),
+   reason:String(archive.reason||"Historial"),
+   inventoryVersionAt:String(archive.inventoryVersionAt||""),
+   totalProducts:Number(archive.totalProducts||0),
+   counted,
+   balanced:Number(archive.balanced??Math.max(0,counted-differences))||0,
+   shortages:Number(archive.shortages??items.filter(i=>Number(i.difference||0)<0).length)||0,
+   surpluses:Number(archive.surpluses??items.filter(i=>Number(i.difference||0)>0).length)||0,
+   differences,
+   itemCount:Number(archive.itemCount||items.length||counted)||0,
+   checksum:String(archive.checksum||digitalArchiveChecksum(items)),
+   needsSync:!!needsSync,
+   lastSyncedAt:String(archive.lastSyncedAt||""),
+   syncError:String(archive.syncError||"")
+ };
+}
+function migrateLegacyDigitalHistoryStorage(){
+ if(!Array.isArray(state.digitalHistory))state.digitalHistory=[];
+ if(!Array.isArray(state.digitalArchiveQueue))state.digitalArchiveQueue=[];
+ const queueById=new Map(state.digitalArchiveQueue.filter(a=>a&&a.id).map(a=>[String(a.id),a]));
+ const metaById=new Map();
+ state.digitalHistory.filter(Boolean).forEach(old=>{
+   if(!old.id)return;
+   if(Array.isArray(old.items)&&old.items.length){
+     const archive={...old,sessionId:old.sessionId||old.id,itemCount:Number(old.itemCount||old.items.length),checksum:old.checksum||digitalArchiveChecksum(old.items)};
+     if(!queueById.has(String(archive.id)))queueById.set(String(archive.id),archive);
+     metaById.set(String(archive.id),digitalArchiveMeta(archive,true));
+   }else{
+     metaById.set(String(old.id),digitalArchiveMeta(old,old.needsSync===true));
+   }
+ });
+ state.digitalArchiveQueue=[...queueById.values()];
+ state.digitalHistory=[...metaById.values()].sort((a,b)=>digitalHistoryTimeMs(b)-digitalHistoryTimeMs(a));
+}
+function digitalHistoryMetaById(id){
+ return (state.digitalHistory||[]).find(a=>String(a.id||"")===String(id||""))||null;
+}
+function digitalArchiveQueuedById(id){
+ return (state.digitalArchiveQueue||[]).find(a=>String(a.id||"")===String(id||""))||null;
+}
+function mergeDigitalHistoryMeta(remote){
+ if(!Array.isArray(state.digitalHistory))state.digitalHistory=[];
+ const map=new Map(state.digitalHistory.filter(Boolean).map(a=>[String(a.id||""),a]));
+ (Array.isArray(remote)?remote:[]).forEach(raw=>{
+   if(!raw?.id)return;
+   const incoming=digitalArchiveMeta(raw,false);
+   const local=map.get(String(incoming.id));
+   if(!local||local.needsSync!==true||digitalHistoryTimeMs(incoming)>=digitalHistoryTimeMs(local))map.set(String(incoming.id),{...local,...incoming,needsSync:false});
+ });
+ state.digitalHistory=[...map.values()].sort((a,b)=>digitalHistoryTimeMs(b)-digitalHistoryTimeMs(a));
+}
+function digitalHistoryTimeMs(a){
+ const d=new Date(a?.archivedAt||a?.updatedAt||0);
+ return Number.isNaN(d.getTime())?0:d.getTime();
+}
+function mergeDigitalHistoryRemote(remote){
+ const legacyFull=(Array.isArray(remote)?remote:[]).filter(a=>a&&a.id&&Array.isArray(a.items)&&a.items.length);
+ legacyFull.forEach(a=>{
+   const archive={...a,sessionId:a.sessionId||a.id,itemCount:Number(a.itemCount||a.items.length),checksum:a.checksum||digitalArchiveChecksum(a.items)};
+   if(!digitalArchiveQueuedById(archive.id))state.digitalArchiveQueue.push(archive);
+   digitalHistoryCache.set(String(archive.id),archive);
+ });
+ mergeDigitalHistoryMeta(remote);
+ legacyFull.forEach(a=>{const m=digitalHistoryMetaById(a.id);if(m)m.needsSync=true;});
+ normalizeCatalogFields();
+}
+function buildDigitalArchiveItems(family){
+ const fam=String(family||"").trim();
+ return orderedProducts(state.inventory.filter(p=>String(p.family||"").trim()===fam)).map(p=>{
+   const c=state.digitalCounts[p.id];
+   if(!c||c.physical===""||c.physical===null||c.physical===undefined)return null;
+   const physical=Number(c.physical);
+   const expected=(c.expectedAtCount!==""&&c.expectedAtCount!==null&&c.expectedAtCount!==undefined&&Number.isFinite(Number(c.expectedAtCount)))
+     ? Number(c.expectedAtCount)
+     : Number(p.stock||0);
+   const difference=physical-expected;
+   return {
+     productId:p.id,
+     code:p.code||"",
+     catalog:catalogText(p.catalog),
+     name:p.name||"",
+     family:p.family||fam,
+     expected,
+     physical,
+     difference,
+     status:difference===0?"Cuadreado":difference>0?"Sobrante":"Faltante",
+     obs:c.obs||"",
+     countedAt:c.updatedAt||c.countedAt||new Date().toISOString()
+   };
+ }).filter(Boolean);
+}
+function archiveDigitalFamily(family,reason="Cierre de familia",responsibleOverride=""){
+ const fam=String(family||"").trim();
+ if(!fam)return null;
+ const items=buildDigitalArchiveItems(fam);
+ if(!items.length)return null;
+ if(!Array.isArray(state.digitalHistory))state.digitalHistory=[];
+ if(!Array.isArray(state.digitalArchiveQueue))state.digitalArchiveQueue=[];
+ const familyTotal=state.inventory.filter(p=>String(p.family||"").trim()===fam).length;
+ const responsible=String(responsibleOverride||items.map(i=>state.digitalCounts[i.productId]?.responsible).find(Boolean)||state.digitalFilter.responsible||"—").trim()||"—";
+ const now=new Date().toISOString();
+ const sessionId=uid();
+ const archive={
+   id:sessionId,sessionId,family:fam,responsible,archivedAt:now,updatedAt:now,reason:String(reason||"Historial"),
+   inventoryVersionAt:state.inventoryVersionAt||"",totalProducts:familyTotal,counted:items.length,
+   balanced:items.filter(i=>i.difference===0).length,
+   shortages:items.filter(i=>i.difference<0).length,
+   surpluses:items.filter(i=>i.difference>0).length,
+   differences:items.filter(i=>i.difference!==0).length,
+   itemCount:items.length,
+   checksum:digitalArchiveChecksum(items),
+   items
+ };
+ state.digitalHistory.push(digitalArchiveMeta(archive,true));
+ state.digitalArchiveQueue.push(archive);
+ digitalHistoryCache.set(archive.id,archive);
+ state.digitalHistory.sort((a,b)=>digitalHistoryTimeMs(b)-digitalHistoryTimeMs(a));
+ if(!authState.localOnly&&cloudConfig.enabled&&cloudReady())setTimeout(()=>syncDigitalArchiveQueue(false),250);
+ return archive;
+}
+function hasEquivalentDigitalArchive(family,items){
+ const fam=String(family||"").trim();
+ const checksum=digitalArchiveChecksum(items||[]);
+ const count=(items||[]).length;
+ return (state.digitalHistory||[]).some(m=>
+   String(m?.family||"").trim()===fam&&
+   String(m?.inventoryVersionAt||"")===String(state.inventoryVersionAt||"")&&
+   Number(m?.itemCount||0)===count&&
+   String(m?.checksum||"")===checksum
+ );
+}
+function archiveAllCurrentDigitalCounts(reason="Importación de inventario",dedupeExisting=false){
+ const families=new Set();
+ state.inventory.forEach(p=>{
+   const c=state.digitalCounts[p.id];
+   if(c&&c.physical!==""&&c.physical!==null&&c.physical!==undefined)families.add(String(p.family||"Sin familia").trim()||"Sin familia");
+ });
+ let created=0,alreadyProtected=0;
+ families.forEach(f=>{
+   if(dedupeExisting){
+     const items=buildDigitalArchiveItems(f);
+     if(items.length&&hasEquivalentDigitalArchive(f,items)){alreadyProtected++;return;}
+   }
+   if(archiveDigitalFamily(f,reason))created++;
+ });
+ return {created,alreadyProtected,total:families.size};
+}
+function pendingDigitalArchiveCount(){return (state.digitalArchiveQueue||[]).length;}
+async function verifyDigitalArchiveSaved(archive){
+ const r=await cloudJsonp("digital_history_status",{id:archive.id});
+ return !!(r?.ok&&r?.saved&&String(r.id||"")===String(archive.id)&&Number(r.itemCount||0)===Number(archive.itemCount||archive.items?.length||0)&&String(r.checksum||"")===String(archive.checksum||""));
+}
+async function saveDigitalArchiveToSheets(archive){
+ if(!archive?.id)throw new Error("Historial digital vacío.");
+ if(!cloudConfig.enabled||!cloudReady())throw new Error("Google Sheets no está conectado.");
+ const payload={action:"save_digital_archive",token:cloudConfig.proxy?"":cloudConfig.token,archive};
+ const opts={method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)};
+ if(cloudConfig.proxy)opts.credentials="same-origin";
+ else opts.mode="no-cors";
+ const res=await fetch(normalizeCloudUrl(cloudConfig.url),opts);
+ if(cloudConfig.proxy){
+   let data={};try{data=await res.json()}catch{}
+   if(res.status===401){handleCloudUnauthorized(data);throw new Error(data?.error||"Debes iniciar sesión en Mi Bodega.");}
+   if(!res.ok||!data?.ok)throw new Error(data?.error||"No se pudo guardar el Historial de Inventario Digital.");
+ }
+ let confirmed=false;
+ for(let attempt=0;attempt<4&&!confirmed;attempt++){
+   await new Promise(r=>setTimeout(r,650+attempt*450));
+   try{confirmed=await verifyDigitalArchiveSaved(archive)}catch{}
+ }
+ if(!confirmed)throw new Error("Google Sheets no confirmó el Historial de Inventario Digital.");
+ return true;
+}
+async function syncDigitalArchiveQueue(blocking=false){
+ if(!state.digitalArchiveQueue?.length)return true;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudReady())return false;
+ const queue=[...state.digitalArchiveQueue];
+ for(const archive of queue){
+   try{
+     await saveDigitalArchiveToSheets(archive);
+     state.digitalArchiveQueue=state.digitalArchiveQueue.filter(a=>String(a.id)!==String(archive.id));
+     const meta=digitalHistoryMetaById(archive.id);
+     if(meta){meta.needsSync=false;meta.lastSyncedAt=new Date().toISOString();meta.syncError="";}
+     digitalHistoryCache.set(archive.id,archive);
+     saveLocal();
+   }catch(err){
+     const meta=digitalHistoryMetaById(archive.id);
+     if(meta){meta.needsSync=true;meta.syncError=String(err?.message||"Error de respaldo");}
+     saveLocal();
+     if(blocking)return false;
+   }
+ }
+ return state.digitalArchiveQueue.length===0;
+}
+async function recoverDigitalHistoryList(silent=true){
+ try{
+   if(!cloudConfig.enabled||!cloudReady())return false;
+   const r=await cloudJsonp("digital_history_list");
+   if(!r?.ok)throw new Error(r?.error||"No se pudo leer el historial de Inventario Digital.");
+   const list=Array.isArray(r.archives)?r.archives:[];
+   mergeDigitalHistoryMeta(list);
+   saveLocal();
+   if(!silent)toast(`Historial digital: ${list.length} conteo(s).`);
+   return true;
+ }catch(err){
+   console.error(err);
+   if(!silent)toast(err?.message||"No se pudo recuperar el historial de Inventario Digital.");
+   return false;
+ }
+}
+async function loadDigitalArchive(id,silent=true){
+ const clean=String(id||"");if(!clean)return null;
+ if(digitalHistoryCache.has(clean))return digitalHistoryCache.get(clean);
+ const queued=digitalArchiveQueuedById(clean);
+ if(queued){digitalHistoryCache.set(clean,queued);return queued;}
+ if(!cloudConfig.enabled||!cloudReady()){
+   if(!silent)toast("Conéctate a Google Sheets para abrir el detalle histórico.");
+   return null;
+ }
+ try{
+   digitalHistoryLoadingId=clean;
+   const r=await cloudJsonp("digital_history",{id:clean});
+   if(!r?.ok||!r.archive)throw new Error(r?.error||"No se pudo cargar el conteo archivado.");
+   const archive=r.archive;
+   if(Array.isArray(archive.items))archive.items.forEach(i=>{i.catalog=catalogText(i.catalog);});
+   digitalHistoryCache.set(clean,archive);
+   return archive;
+ }catch(err){
+   console.error(err);
+   if(!silent)toast(err?.message||"No se pudo cargar el historial.");
+   return null;
+ }finally{digitalHistoryLoadingId="";}
+}
+async function ensureDigitalArchiveLoaded(id,silent=true){
+ const clean=String(id||"");if(!clean)return null;
+ const archive=await loadDigitalArchive(clean,silent);
+ if(archive&&String(digitalHistorySelectedId)===clean){digitalHistoryLoadedArchive=archive;render();}
+ return archive;
+}
+function digitalHistoryRowsSorted(){
+ return [...(state.digitalHistory||[])].sort((a,b)=>digitalHistoryTimeMs(b)-digitalHistoryTimeMs(a));
+}
+function digitalHistoryLatestByFamily(){
+ const map=new Map();
+ digitalHistoryRowsSorted().forEach(a=>{const f=String(a.family||"Sin familia");if(!map.has(f))map.set(f,a);});
+ return [...map.values()];
+}
+function digitalHistoryDate(iso){
+ const d=new Date(iso||0);if(Number.isNaN(d.getTime()))return "—";
+ return d.toLocaleString("es-GT",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+function digitalHistoryTabs(){
+ return `<div class="digital-view-tabs">
+   <button class="btn ${digitalView==="current"?"primary":"tonal"}" data-digital-view="current">Conteo actual</button>
+   <button class="btn ${digitalView==="history"?"primary":"tonal"}" data-digital-view="history">Historial (${(state.digitalHistory||[]).length})</button>
+ </div>`;
+}
+function digitalHistoryDetailFor(id){
+ const clean=String(id||"");
+ if(!clean)return null;
+ return digitalHistoryCache.get(clean)||digitalArchiveQueuedById(clean)||((digitalHistoryLoadedArchive&&String(digitalHistoryLoadedArchive.id)===clean)?digitalHistoryLoadedArchive:null);
+}
+function renderDigitalHistory(){
+ const archives=digitalHistoryRowsSorted();
+ if(!digitalHistorySelectedId&&archives.length)digitalHistorySelectedId=archives[0].id;
+ const selected=archives.find(a=>a.id===digitalHistorySelectedId)||archives[0]||null;
+ if(selected)digitalHistorySelectedId=selected.id;
+ const detail=selected?digitalHistoryDetailFor(selected.id):null;
+ if(selected&&!detail&&digitalHistoryLoadingId!==String(selected.id))setTimeout(()=>ensureDigitalArchiveLoaded(selected.id,true),0);
+ const optionsHtml=archives.map(a=>`<option value="${esc(a.id)}" ${selected&&a.id===selected.id?"selected":""}>${esc(a.family)} · ${esc(a.responsible||"—")} · ${esc(digitalHistoryDate(a.archivedAt))} · ${esc(a.reason||"")}</option>`).join("");
+ const rows=detail?(detail.items||[]).map(i=>`<tr>
+   <td><b>${esc(i.code||"—")}</b></td><td>${esc(i.catalog||"—")}</td><td>${esc(i.name||"—")}</td><td>${esc(i.family||"—")}</td>
+   <td class="qty">${Number(i.expected||0)}</td><td class="qty">${Number(i.physical||0)}</td>
+   <td class="qty">${Number(i.difference)>0?"+":""}${Number(i.difference||0)}</td>
+   <td><span class="chip ${Number(i.difference)===0?"count-balanced":Number(i.difference)>0?"count-surplus":"count-shortage"}">${esc(i.status||"—")}</span></td>
+   <td>${esc(i.obs||"—")}</td></tr>`).join(""):"";
+ const syncLabel=selected?.needsSync?`<span class="chip pending">Respaldo pendiente</span>`:`<span class="chip count-balanced">Guardado en Sheets</span>`;
+ return `<section class="panel digital-panel digital-history-panel">
+   <div class="panel-head digital-history-head"><div><h2>Historial · Inventario Digital</h2><p>Cada cierre es una sesión independiente. El detalle permanente se guarda en Google Sheets y no cambia con nuevas importaciones.</p></div>${digitalHistoryTabs()}</div>
+   ${archives.length?`<div class="digital-history-toolbar"><label>Conteo archivado<select id="digitalHistorySelect">${optionsHtml}</select></label><button class="btn tonal" id="printDigitalHistoryBtn">🖨️ Imprimir historial</button></div>
+   <div class="digital-history-summary">
+     <div><small>Familia</small><b>${esc(selected.family||"—")}</b></div><div><small>Responsable</small><b>${esc(selected.responsible||"—")}</b></div>
+     <div><small>Archivado</small><b>${esc(digitalHistoryDate(selected.archivedAt))}</b></div><div><small>Motivo</small><b>${esc(selected.reason||"—")}</b></div>
+     <div><small>Contados</small><b>${Number(selected.counted||0)} / ${Number(selected.totalProducts||0)}</b></div><div><small>Diferencias</small><b>${Number(selected.differences||0)}</b></div>
+   </div><div class="digital-history-syncline">${syncLabel}</div>
+   ${detail?`<div class="table-wrap"><table class="digital-history-table"><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist. al contar</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">${digitalHistoryLoadingId===String(selected.id)?"Cargando detalle desde Google Sheets...":"El detalle está guardado en Google Sheets. Conéctate para consultarlo."}</div>`}`:
+   `<div class="empty">Todavía no hay conteos archivados. Al cerrar una familia o importar un inventario nuevo, el conteo anterior quedará guardado aquí.</div>`}
+ </section>`;
+}
+async function printDigitalHistoryArchive(archiveOrMeta){
+ let archive=archiveOrMeta||null;
+ if(archive&&!Array.isArray(archive.items))archive=await loadDigitalArchive(archive.id,false);
+ if(!archive||!(archive.items||[]).length)return toast("No hay historial para imprimir.");
+ const rows=archive.items.map(i=>`<tr><td>${esc(i.code||"")}</td><td>${esc(i.catalog||"")}</td><td>${esc(i.name||"")}</td><td>${esc(i.family||"")}</td><td>${Number(i.expected||0)}</td><td>${Number(i.physical||0)}</td><td>${Number(i.difference)>0?"+":""}${Number(i.difference||0)}</td><td>${esc(i.status||"")}</td><td>${esc(i.obs||"")}</td></tr>`).join("");
+ const w=window.open("","_blank","width=1100,height=800");if(!w)return toast("El navegador bloqueó la impresión.");
+ w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Historial Inventario Digital</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{margin:0 0 5px}.meta{margin-bottom:18px;color:#555}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #bbb;padding:6px;text-align:left}th{background:#eee}</style></head><body><h1>Inventario Digital · ${esc(archive.family)}</h1><div class="meta">Responsable: ${esc(archive.responsible||"—")} · Archivado: ${esc(digitalHistoryDate(archive.archivedAt))} · ${esc(archive.reason||"")}</div><table><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist.</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),120)<\/script></body></html>`);w.document.close();
+}
+function digitalFamiliesOverviewRows(){
+ const archives=digitalHistoryLatestByFamily();
+ const currentMap=new Map();
+ digitalCountedFamilies().forEach(f=>{
+   const products=state.inventory.filter(p=>String(p.family||"Sin familia")===f);
+   const countedItems=products.filter(p=>{const c=state.digitalCounts[p.id];return c&&c.physical!==""&&c.physical!==null&&c.physical!==undefined});
+   if(!countedItems.length)return;
+   const differences=countedItems.filter(p=>{const c=state.digitalCounts[p.id];return digitalDiff(p,c.physical)!==0}).length;
+   const responsible=countedItems.map(p=>state.digitalCounts[p.id]?.responsible).find(Boolean)||digitalFamilySession(f)?.responsible||"—";
+   const lastTimes=countedItems.map(p=>Date.parse(state.digitalCounts[p.id]?.updatedAt||state.digitalCounts[p.id]?.detectedAt||"")||0);
+   currentMap.set(f,{
+     id:"current:"+f,
+     family:f,
+     responsible,
+     counted:countedItems.length,
+     totalProducts:products.length,
+     differences,
+     balanced:Math.max(0,countedItems.length-differences),
+     archivedAt:"",
+     current:true,
+     closed:digitalFamilyClosed(f),
+     lastAt:Math.max(0,...lastTimes)
+   });
+ });
+ const rows=[];
+ currentMap.forEach(v=>rows.push(v));
+ archives.forEach(a=>{
+   const f=String(a.family||"Sin familia");
+   if(currentMap.has(f))return;
+   rows.push({
+     ...a,
+     current:false,
+     closed:digitalFamilyClosed(f),
+     balanced:Math.max(0,Number(a.counted||0)-Number(a.differences||0)),
+     lastAt:digitalHistoryTimeMs(a)
+   });
+ });
+ return rows.sort((a,b)=>(Number(b.lastAt)||0)-(Number(a.lastAt)||0)||String(a.family||"").localeCompare(String(b.family||""),"es"));
+}
+function digitalFamiliesPageTabs(){
+ return `<div class="families-page-tabs">
+   <button class="btn ${digitalFamiliesPageView==="families"?"primary":"tonal"}" data-families-page-view="families">Familias contabilizadas</button>
+   <button class="btn ${digitalFamiliesPageView==="history"?"primary":"tonal"}" data-families-page-view="history">Historial (${(state.digitalHistory||[]).length})</button>
+ </div>`;
+}
+function renderFamiliesCounted(){
+ if(digitalFamiliesPageView==="history")return renderFamiliesHistoryPage();
+ const rows=digitalFamiliesOverviewRows();
+ const total=rows.length;
+ const inProgress=rows.filter(r=>r.current&&!r.closed).length;
+ const withDiff=rows.filter(r=>Number(r.differences||0)>0).length;
+ const balanced=rows.filter(r=>!r.current&&Number(r.differences||0)===0).length;
+ const body=rows.map(r=>{
+   const isArchive=!r.current;
+   const status=r.current?(r.closed?"Cerrada":"En proceso"):(Number(r.differences||0)>0?"Con diferencias":"Cuadreada");
+   const chip=r.current?(r.closed?"count-balanced":"pending"):(Number(r.differences||0)>0?"low":"count-balanced");
+   const date=r.current?(r.lastAt?digitalHistoryDate(new Date(r.lastAt).toISOString()):"Conteo actual"):digitalHistoryDate(r.archivedAt);
+   return `<tr>
+     <td class="family-center"><b>${esc(r.family||"Sin familia")}</b></td>
+     <td>${esc(r.responsible||"—")}</td>
+     <td class="qty">${Number(r.counted||0)} / ${Number(r.totalProducts||0)}</td>
+     <td class="qty">${Number(r.balanced||0)}</td>
+     <td class="qty">${Number(r.differences||0)}</td>
+     <td>${esc(date)}</td>
+     <td><span class="chip ${chip}">${status}</span></td>
+     <td><div class="table-actions families-actions">
+       ${isArchive?`<button class="mini-action" data-family-history="${esc(r.id)}" title="Ver detalle">◉</button><button class="mini-action" data-print-family-history="${esc(r.id)}" title="Imprimir">🖨</button>`:`<button class="mini-action" data-open-counted-family="${esc(r.family)}" data-responsible="${esc(r.responsible||"")}" title="Continuar conteo">↗</button>`}
+       ${Number(r.differences||0)>0?`<button class="mini-action" data-go="diferencias" title="Ver diferencias">≠</button>`:""}
+       ${isArchive?`<button class="mini-action" data-new-counted-family="${esc(r.family)}" data-archive-id="${esc(r.id)}" data-responsible="${esc(r.responsible||"")}" title="Nuevo conteo con existencias actuales">＋</button>`:""}
+     </div></td>
+   </tr>`;
+ }).join("");
+ return `<section class="panel counted-families-page">
+   <div class="panel-head counted-families-head"><div><h2>Familias Contadas</h2><p>Resumen del Inventario Digital. Aquí quedan las familias contabilizadas sin ocupar espacio en Inicio.</p></div>${digitalFamiliesPageTabs()}</div>
+   <div class="counted-family-summary">
+     <div><small>Familias registradas</small><b>${total}</b></div>
+     <div><small>En proceso</small><b>${inProgress}</b></div>
+     <div><small>Cuadradas</small><b>${balanced}</b></div>
+     <div><small>Con diferencias</small><b>${withDiff}</b></div>
+   </div>
+   ${rows.length?`<div class="table-wrap"><table class="counted-families-table"><thead><tr><th>Familia</th><th>Responsable</th><th>Contados</th><th>Cuadrados</th><th>Diferencias</th><th>Último conteo</th><th>Estado</th><th>Acc.</th></tr></thead><tbody>${body}</tbody></table></div>`:`<div class="empty">Todavía no hay familias contabilizadas. Cuando cierres una familia en Inventario Digital aparecerá aquí.</div>`}
+ </section>`;
+}
+function renderFamiliesHistoryPage(){
+ const archives=digitalHistoryRowsSorted();
+ if(!digitalHistorySelectedId&&archives.length)digitalHistorySelectedId=archives[0].id;
+ const selected=archives.find(a=>a.id===digitalHistorySelectedId)||archives[0]||null;
+ if(selected)digitalHistorySelectedId=selected.id;
+ const detail=selected?digitalHistoryDetailFor(selected.id):null;
+ if(selected&&!detail&&digitalHistoryLoadingId!==String(selected.id))setTimeout(()=>ensureDigitalArchiveLoaded(selected.id,true),0);
+ const optionsHtml=archives.map(a=>`<option value="${esc(a.id)}" ${selected&&a.id===selected.id?"selected":""}>${esc(a.family)} · ${esc(a.responsible||"—")} · ${esc(digitalHistoryDate(a.archivedAt))}</option>`).join("");
+ const rows=detail?(detail.items||[]).map(i=>`<tr><td><b>${esc(i.code||"—")}</b></td><td>${esc(i.catalog||"—")}</td><td>${esc(i.name||"—")}</td><td class="family-center">${esc(i.family||"—")}</td><td class="qty">${Number(i.expected||0)}</td><td class="qty">${Number(i.physical||0)}</td><td class="qty">${Number(i.difference)>0?"+":""}${Number(i.difference||0)}</td><td><span class="chip ${Number(i.difference)===0?"count-balanced":Number(i.difference)>0?"count-surplus":"count-shortage"}">${esc(i.status||"—")}</span></td><td>${esc(i.obs||"—")}</td></tr>`).join(""):"";
+ return `<section class="panel counted-families-page digital-history-panel">
+   <div class="panel-head counted-families-head"><div><h2>Historial · Inventario Digital</h2><p>Historial permanente por sesión. Importar un inventario nuevo no modifica los conteos anteriores.</p></div>${digitalFamiliesPageTabs()}</div>
+   ${archives.length?`<div class="digital-history-toolbar"><label>Conteo archivado<select id="familiesHistorySelect">${optionsHtml}</select></label><button class="btn tonal" id="familiesPrintHistoryBtn">🖨️ Imprimir historial</button></div>
+   <div class="digital-history-summary"><div><small>Familia</small><b>${esc(selected.family||"—")}</b></div><div><small>Responsable</small><b>${esc(selected.responsible||"—")}</b></div><div><small>Archivado</small><b>${esc(digitalHistoryDate(selected.archivedAt))}</b></div><div><small>Motivo</small><b>${esc(selected.reason||"—")}</b></div><div><small>Contados</small><b>${Number(selected.counted||0)} / ${Number(selected.totalProducts||0)}</b></div><div><small>Diferencias</small><b>${Number(selected.differences||0)}</b></div></div>
+   ${detail?`<div class="table-wrap"><table class="digital-history-table"><thead><tr><th>Código</th><th>Catálogo</th><th>Descripción</th><th>Familia</th><th>Exist. al contar</th><th>Físico</th><th>Dif.</th><th>Estado</th><th>Obs.</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">${digitalHistoryLoadingId===String(selected.id)?"Cargando detalle desde Google Sheets...":"El detalle está guardado en Google Sheets. Conéctate para consultarlo."}</div>`}`:`<div class="empty">Todavía no hay conteos archivados.</div>`}
+ </section>`;
+}
 function digitalCountedFamilies(){
  const families=new Set();
  state.inventory.forEach(p=>{
@@ -1611,6 +2201,9 @@ function syncDifferenceHistoryFromDigital(product){
  let rec=null;
  if(c.historyId){
    rec=(state.differenceHistory||[]).find(r=>r.id===c.historyId)||null;
+   // Si la diferencia anterior ya fue resuelta, una nueva diferencia debe crear
+   // un registro nuevo con su propia fecha/hora, no reutilizar el historial cerrado.
+   if(rec&&!differenceRecordOpen(rec))rec=null;
  }
  if(!rec)rec=openDifferenceForProduct(product);
 
@@ -1647,7 +2240,14 @@ function syncDifferenceHistoryFromDigital(product){
 
    const newObs=c.obs||"";
    const newResponsible=c.responsible||state.digitalFilter.responsible||rec.responsible||"";
+   // V70: el registro pendiente debe mostrar SIEMPRE el último físico escrito.
+   // Antes solo se actualizaban lastPhysical/lastDifference; por eso, al escribir 42,
+   // Diferencias podía conservar el primer dígito (4).
+   const detectedExpected=Number.isFinite(Number(rec.expected))?Number(rec.expected):expected;
+   const visibleDifference=physicalNum-detectedExpected;
    const changed=
+     Number(rec.physical)!==physicalNum ||
+     Number(rec.difference)!==visibleDifference ||
      Number(rec.lastExpected)!==expected ||
      Number(rec.lastPhysical)!==physicalNum ||
      Number(rec.lastDifference)!==diff ||
@@ -1656,6 +2256,8 @@ function syncDifferenceHistoryFromDigital(product){
 
    c.historyId=rec.id;
    if(changed){
+     rec.physical=physicalNum;
+     rec.difference=visibleDifference;
      rec.lastCheckedAt=now;
      rec.lastExpected=expected;
      rec.lastPhysical=physicalNum;
@@ -1686,6 +2288,20 @@ function archiveCurrentDigitalDifferences(){
    const before=(state.differenceHistory||[]).length;
    const rec=syncDifferenceHistoryFromDigital(p);
    if(rec||state.differenceHistory.length!==before)touched++;
+ });
+ return touched;
+}
+function reconcileOpenDifferencesFromDigital(){
+ let touched=0;
+ state.inventory.forEach(p=>{
+   const c=state.digitalCounts[p.id];
+   if(!c||c.physical===""||c.physical===null||c.physical===undefined)return;
+   const rec=openDifferenceForProduct(p);
+   if(!rec)return;
+   const beforePhysical=Number(rec.physical);
+   const beforeDifference=Number(rec.difference);
+   syncDifferenceHistoryFromDigital(p);
+   if(Number(rec.physical)!==beforePhysical||Number(rec.difference)!==beforeDifference)touched++;
  });
  return touched;
 }
@@ -1754,6 +2370,7 @@ function digitalDifferenceRows(){
  );
 }
 function renderDiferencias(){
+ reconcileOpenDifferencesFromDigital();
  const openRows=differenceHistoryRows("open");
  const rows=differenceHistoryRows(differenceView);
  const resolvedCount=(state.differenceHistory||[]).filter(r=>!differenceRecordOpen(r)).length;
@@ -1761,8 +2378,6 @@ function renderDiferencias(){
  const tableRows=rows.map(rec=>{
    const dt=digitalDifferenceDateTime(rec.detectedAt);
    const resolvedDt=digitalDifferenceDateTime(rec.resolvedAt);
-   const current=currentProductForDifference(rec);
-   const currentStock=current?Number(current.stock||0):"—";
    const type=Number(rec.difference)>0?"Sobrante":"Faltante";
    const linked=currentCountLinkedToDifference(rec);
    const canAdjust=!!(
@@ -1784,15 +2399,14 @@ function renderDiferencias(){
      <td class="qty">${Number(rec.expected||0)}</td>
      <td class="qty">${Number(rec.physical||0)}</td>
      <td class="qty">${Number(rec.difference)>0?"+":""}${Number(rec.difference||0)}</td>
-     <td class="qty">${currentStock}</td>
      <td><span class="chip ${Number(rec.difference)>0?"count-surplus":"count-shortage"}">${type}</span></td>
      <td><span class="chip ${differenceRecordOpen(rec)?"pending":"count-balanced"}">${differenceRecordOpen(rec)?"Pendiente":"Resuelta"}</span></td>
      <td>${esc(rec.obs||"—")}</td>
      ${differenceView==="history"?`<td>${differenceRecordOpen(rec)?"—":`${resolvedDt.date} ${resolvedDt.time}`}<br><small>${esc(rec.resolution||"")}</small></td>`:""}
      <td>
        ${differenceRecordOpen(rec)?`<div class="table-actions difference-actions">
-         <button class="mini-action review-action" data-review-history="${rec.id}" title="Revisar diferencia" aria-label="Revisar diferencia">↩</button>
-         ${canAdjust?`<button class="mini-action adjust-action" data-adjust-difference="${linked.p.id}" title="Ajustar inventario con el conteo actual" aria-label="Ajustar inventario">↔</button>`:""}
+         <button class="mini-action review-action difference-action-btn" data-review-history="${rec.id}" title="Revisar diferencia" aria-label="Revisar diferencia"><span>↩</span><span class="action-label">Revisar</span></button>
+         ${canAdjust?`<button class="mini-action adjust-action difference-action-btn" data-adjust-difference="${linked.p.id}" title="Ajustar inventario con el conteo actual" aria-label="Ajustar inventario"><span>↔</span><span class="action-label">Ajustar</span></button>`:""}
        </div>`:"—"}
      </td>
    </tr>`;
@@ -1810,6 +2424,11 @@ function renderDiferencias(){
      </div>
    </div>
 
+   <div class="difference-help" role="note">
+     <div><b>Cómo leer esta pantalla</b><span>Físico actual es el último conteo guardado. Dif. actual = Físico − Exist. al detectar.</span></div>
+     <div class="difference-help-legend"><span class="diff-negative">− Faltante</span><span class="diff-positive">+ Sobrante</span><span>↩ Revisar</span><span>↔ Ajustar stock</span></div>
+   </div>
+
    ${rows.length?`
      <div class="table-wrap">
        <table class="differences-digital-table persistent-differences-table">
@@ -1822,10 +2441,9 @@ function renderDiferencias(){
              <th>Código</th>
              <th>Catálogo</th>
              <th>Descripción</th>
-             <th>Exist. detectada</th>
-             <th>Físico</th>
-             <th>Dif.</th>
-             <th>Exist. actual</th>
+             <th>Exist. al detectar</th>
+             <th>Físico actual</th>
+             <th>Dif. actual</th>
              <th>Tipo</th>
              <th>Seguimiento</th>
              <th>Obs.</th>
@@ -1851,7 +2469,9 @@ function renderSinExist(){
  const rows=items.map(p=>{
    const rec=activeStockoutForCode(p.code);
    const dt=stockoutDateTime(rec?.detectedAt||"");
-   return `<tr>
+   const rowCounted=c.physical!=="";
+   const rowClass=rowCounted?"digital-row-counted":"";
+   return `<tr class="${rowClass}" data-digital-row="${p.id}">
      <td><div class="table-actions"><button class="mini-action" data-view-product="${p.id}" title="Ver detalle">◉</button></div></td>
      <td>${dt.date}</td>
      <td>${dt.time}</td>
@@ -1903,11 +2523,13 @@ function closeDigitalFamily(){
  if(!responsible)return toast("No hay responsable asignado.");
  if(!confirm(`¿Cerrar la familia ${family}? El Inventario Digital volverá a quedar vacío.`))return;
 
+ const archived=archiveDigitalFamily(family,"Cierre de familia",responsible);
  if(!state.digitalClosedFamilies)state.digitalClosedFamilies={};
  state.digitalClosedFamilies[family]={
    closed:true,
    responsible,
-   closedAt:new Date().toISOString()
+   closedAt:new Date().toISOString(),
+   archiveId:archived?.id||state.digitalClosedFamilies[family]?.archiveId||""
  };
 
  state.digitalFilter={
@@ -1921,7 +2543,7 @@ function closeDigitalFamily(){
  };
  save();
  render();
- toast(`Familia ${family} cerrada.`);
+ toast(`Familia ${family} cerrada${archived?" y guardada en Historial":""}.`);
 }
 function reopenDigitalFamily(family,responsible=""){
  const key=digitalFamilyKey(family);
@@ -1933,6 +2555,24 @@ function reopenDigitalFamily(family,responsible=""){
  state.digitalFilter.family=key;
  state.digitalFilter.search="";
  save();
+}
+function startNewDigitalFamilyCount(family,responsible=""){
+ const key=digitalFamilyKey(family);
+ if(!key)return false;
+ const products=state.inventory.filter(p=>digitalFamilyKey(p.family)===key);
+ const ids=new Set(products.map(p=>String(p.id)));
+ (state.differenceHistory||[]).forEach(rec=>{
+   if(differenceRecordOpen(rec)&&(ids.has(String(rec.productId||""))||digitalFamilyKey(rec.family)===key)){
+     resolveDifferenceRecord(rec,"Conteo anterior archivado; se inició una nueva sesión de Inventario Digital");
+   }
+ });
+ products.forEach(p=>{delete state.digitalCounts[p.id];});
+ if(!state.digitalClosedFamilies)state.digitalClosedFamilies={};
+ const previous=state.digitalClosedFamilies[key]||{};
+ state.digitalClosedFamilies[key]={...previous,closed:false,reopenedAt:new Date().toISOString(),newSessionAt:new Date().toISOString()};
+ state.digitalFilter={...state.digitalFilter,responsible:responsible||previous.responsible||"",family:key,search:"",condition:"none",value1:"",value2:""};
+ save();
+ return true;
 }
 function digitalFamilies(){
  return [...new Set(state.inventory.map(p=>String(p.family||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
@@ -2012,16 +2652,19 @@ function digitalFilteredProducts(){
 }
 function digitalRows(items=digitalFilteredProducts()){
  if(!state.digitalFilter.responsible){
-   return `<tr><td colspan="10"><div class="empty">Asigna el responsable del conteo físico antes de seleccionar una familia.</div></td></tr>`;
+   return `<tr><td colspan="12"><div class="empty">Asigna el responsable del conteo físico antes de seleccionar una familia.</div></td></tr>`;
  }
  if(!state.digitalFilter.family){
-   return `<tr><td colspan="10"><div class="empty">Selecciona una familia para cargar el Inventario Digital.</div></td></tr>`;
+   return `<tr><td colspan="12"><div class="empty">Selecciona una familia para cargar el Inventario Digital.</div></td></tr>`;
  }
  if(!items.length){
-   return `<tr><td colspan="10"><div class="empty">No hay productos que coincidan con la búsqueda o filtro.</div></td></tr>`;
+   return `<tr><td colspan="12"><div class="empty">No hay productos que coincidan con la búsqueda o filtro.</div></td></tr>`;
  }
  return items.map(p=>{
    const c=digitalCountState(p.id),st=digitalStatus(p,c.physical);
+   const diff=digitalDiff(p,c.physical);
+   const diffText=diff===""?"—":`${Number(diff)>0?"+":""}${Number(diff)}`;
+   const diffCls=diff===""?"is-empty":Number(diff)===0?"is-zero":Number(diff)>0?"is-positive":"is-negative";
    const familyClosed=digitalFamilyClosed(state.digitalFilter.family);
    const disabled=familyClosed?"disabled":"";
    return `<tr>
@@ -2032,6 +2675,8 @@ function digitalRows(items=digitalFilteredProducts()){
      <td>${esc(p.family||"—")}</td>
      <td class="qty">${p.stock}</td>
      <td><input class="digital-physical no-spinner" type="number" min="0" inputmode="numeric" value="${c.physical===""?"":esc(c.physical)}" placeholder="0" data-digital-physical="${p.id}" ${disabled}></td>
+     <td class="digital-calc-cell"><button type="button" class="digital-calc-row-btn" data-digital-calc="${p.id}" title="Abrir calculadora para ${esc(p.code)}" aria-label="Abrir calculadora para ${esc(p.code)}" ${disabled}>🧮</button></td>
+     <td class="qty digital-diff-cell"><span class="digital-diff-value ${diffCls}" data-digital-diff="${p.id}">${diffText}</span></td>
      <td>${esc(p.location||"—")}</td>
      <td><span class="chip ${st.cls}" data-digital-status="${p.id}">${st.text}</span></td>
      <td><input class="digital-obs" type="text" value="${esc(c.obs)}" placeholder="Observación..." data-digital-obs="${p.id}" ${disabled}></td>
@@ -2157,6 +2802,7 @@ function printDigitalFamilySheet(){
  w.document.close();
 }
 function renderDigital(){
+ if(digitalView==="history")return renderDigitalHistory();
  const fams=digitalFamilies(),items=digitalFilteredProducts();
  const counted=items.filter(p=>digitalCountState(p.id).physical!=="").length;
  const diffs=items.filter(p=>{const c=digitalCountState(p.id);return c.physical!==""&&digitalDiff(p,c.physical)!==0}).length;
@@ -2169,6 +2815,7 @@ function renderDigital(){
          ? `Responsable: ${esc(state.digitalFilter.responsible)}${state.digitalFilter.family?` · ${esc(state.digitalFilter.family)} · ${items.length} producto(s) · ${counted} contados · ${diffs} con diferencia${digitalFamilyClosed(state.digitalFilter.family)?" · 🔒 Familia cerrada":""}`:" · Selecciona una familia para comenzar."}`
          : "Asigna primero el responsable del conteo físico."
        }</p>
+       ${digitalHistoryTabs()}
      </div>
      <div class="digital-tools">
        <button class="toolbar-btn responsible-btn" id="digitalResponsibleBtn">
@@ -2180,6 +2827,9 @@ function renderDigital(){
        </select>
        <div class="digital-search"><span>⌕</span><input id="digitalSearchInput" placeholder="Buscar..." value="${esc(state.digitalFilter.search||"")}" ${state.digitalFilter.responsible&&state.digitalFilter.family?"":"disabled"}></div>
        ${digitalConditionMenu()}
+       <button class="toolbar-btn digital-calculator-open" id="digitalCalculatorBtn" ${state.digitalFilter.responsible&&state.digitalFilter.family?"":"disabled"}>
+         🧮 Calculadora
+       </button>
        <button class="toolbar-btn" id="printDigitalFamilyBtn" ${state.digitalFilter.responsible&&state.digitalFilter.family?"":"disabled"}>
          🖨️ Imprimir familia
        </button>
@@ -2198,12 +2848,54 @@ function renderDigital(){
        <th>Familia</th>
        <th>Exist.</th>
        <th>Físico (editable)</th>
+       <th>Calc.</th>
+       <th>Dif.</th>
        <th>Ubicación</th>
        <th>Estado</th>
        <th>Obs. (editable)</th>
      </tr></thead>
      <tbody>${digitalRows(items)}</tbody>
    </table></div>
+
+   <dialog id="digitalCalculatorDialog" class="digital-calculator-dialog" aria-labelledby="digitalCalculatorTitle">
+     <div class="digital-calculator-shell">
+       <div class="digital-calculator-head">
+         <div>
+           <small>INVENTARIO DIGITAL</small>
+           <h3 id="digitalCalculatorTitle">🧮 Calculadora de conteo</h3>
+           <p id="digitalCalculatorTarget">Selecciona una fila para enviar el resultado a Físico.</p>
+         </div>
+         <button type="button" class="icon-btn" id="digitalCalculatorClose" aria-label="Cerrar calculadora">×</button>
+       </div>
+       <div class="digital-calculator-display" id="digitalCalculatorDisplay" aria-live="polite">0</div>
+       <div class="digital-calculator-expression" id="digitalCalculatorExpression">Listo para calcular</div>
+       <div class="digital-calculator-grid" role="group" aria-label="Teclado de calculadora">
+         <button type="button" class="calc-key calc-key-soft" data-calc-action="clear">C</button>
+         <button type="button" class="calc-key calc-key-soft" data-calc-action="backspace">⌫</button>
+         <button type="button" class="calc-key calc-key-op" data-calc-op="/">÷</button>
+         <button type="button" class="calc-key calc-key-op" data-calc-op="*">×</button>
+         <button type="button" class="calc-key" data-calc-digit="7">7</button>
+         <button type="button" class="calc-key" data-calc-digit="8">8</button>
+         <button type="button" class="calc-key" data-calc-digit="9">9</button>
+         <button type="button" class="calc-key calc-key-op" data-calc-op="-">−</button>
+         <button type="button" class="calc-key" data-calc-digit="4">4</button>
+         <button type="button" class="calc-key" data-calc-digit="5">5</button>
+         <button type="button" class="calc-key" data-calc-digit="6">6</button>
+         <button type="button" class="calc-key calc-key-op" data-calc-op="+">+</button>
+         <button type="button" class="calc-key" data-calc-digit="1">1</button>
+         <button type="button" class="calc-key" data-calc-digit="2">2</button>
+         <button type="button" class="calc-key" data-calc-digit="3">3</button>
+         <button type="button" class="calc-key calc-key-equals" data-calc-action="equals">=</button>
+         <button type="button" class="calc-key calc-key-zero" data-calc-digit="0">0</button>
+         <button type="button" class="calc-key" data-calc-digit="00">00</button>
+       </div>
+       <div class="digital-calculator-actions">
+         <button type="button" class="btn ghost" id="digitalCalculatorReset">Limpiar</button>
+         <button type="button" class="btn primary" id="digitalCalculatorUse">✓ Usar resultado en Físico</button>
+       </div>
+       <p class="digital-calculator-note">Ejemplo: 12 × 4 + 3 = 51. El resultado para Físico debe ser un número entero mayor o igual a 0.</p>
+     </div>
+   </dialog>
  </section>`;
 }
 function pendingBaseRows(){
@@ -2475,14 +3167,14 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
      <label>URL de la Web App de Google Apps Script
        <input id="cloudUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(cloudConfig.url||"")}">
      </label>
-     <label>Token de conexión
-       <input id="cloudToken" type="password" placeholder="No se necesita si usas Proxy Netlify" value="${esc(cloudConfig.token||"")}">
+     <label>Token de conexión · solo modo directo
+       <input id="cloudToken" type="password" placeholder="En Proxy Netlify el Token vive solo en el servidor" value="${cloudConfig.proxy?"":esc(cloudConfig.token||"")}" ${cloudConfig.proxy?"disabled":""}>
      </label>
    </div>
 
    <label class="cloud-check">
      <input id="cloudProxy" type="checkbox" ${cloudConfig.proxy?"checked":""}>
-     <span><b>Proxy seguro / Netlify</b><small>Permite usar /api/bodega sin guardar el Token en el navegador.</small></span>
+     <span><b>Proxy seguro / Netlify</b><small>Protege /api/bodega con una sesión HttpOnly y PIN de acceso. El Token no se guarda en el navegador.</small></span>
    </label>
    <label class="cloud-check">
      <input id="cloudEnabled" type="checkbox" ${cloudConfig.enabled?"checked":""}>
@@ -2492,6 +3184,14 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
      <input id="cloudAutoSync" type="checkbox" ${cloudConfig.autoSync?"checked":""}>
      <span><b>Sincronización automática con Google Sheets</b><small>Guarda cada cambio en la hoja y revisa automáticamente si otro dispositivo hizo cambios.</small></span>
    </label>
+
+   ${cloudConfig.proxy?`<div class="cloud-security-row">
+     <div><b>🔐 Acceso seguro V80</b><small>${authState.localOnly?"Modo local temporal: los cambios se guardan en este dispositivo, pero no se sincronizan.":authState.authenticated?"Sesión segura activa en este dispositivo.":authState.securityConfigured===false?"Falta BODEGA_ACCESS_PIN en Netlify.":"PIN requerido para sincronizar con Google Sheets."}</small></div>
+     <div class="cloud-security-actions">
+       <button type="button" class="btn tonal" id="cloudSecurityLogin">${authState.authenticated?"Renovar acceso":"Ingresar PIN"}</button>
+       ${authState.authenticated?`<button type="button" class="btn danger-soft" id="cloudSecurityLogout">Cerrar sesión</button>`:""}
+     </div>
+   </div>`:""}
 
    <div class="cloud-actions">
      <button class="btn primary" id="saveCloudConnection">Guardar conexión</button>
@@ -2503,12 +3203,12 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
 
    <div class="cloud-help">
      <b>Instalación inicial</b>
-     <p>Google Sheets vuelve a ser la base central. Cada dispositivo guarda sus cambios automáticamente y revisa la base central cada pocos segundos. No usa modo “tiempo real” ni consultas continuas agresivas. La copia local sirve como respaldo si se cae Internet.</p>
+     <p>Google Sheets es la base central. V80 protege el proxy de Netlify con PIN y una sesión segura del navegador. Cada dispositivo guarda primero una copia local y después sincroniza; si eliges “solo local”, Auto Sync queda pausado hasta que vuelvas a ingresar el PIN.</p>
    </div>
  </div>
 
  <div class="actions" style="margin-top:14px"><button class="btn primary" id="saveCfg">Guardar configuración</button></div></section>`}
-const renderers={inicio:renderInicio,inventario:renderInventario,salida:renderSalida,conteo:renderConteo,diferencias:renderDiferencias,sinexist:renderSinExist,digital:renderDigital,herramientas:renderHerramientas,nuevos:renderNuevos,config:renderConfig};
+const renderers={inicio:renderInicio,inventario:renderInventario,salida:renderSalida,conteo:renderConteo,diferencias:renderDiferencias,sinexist:renderSinExist,digital:renderDigital,familias:renderFamiliesCounted,herramientas:renderHerramientas,nuevos:renderNuevos,config:renderConfig};
 function isTouchTabletOrPhone(){
  const coarse=window.matchMedia&&window.matchMedia("(pointer: coarse)").matches;
  return window.innerWidth<=820||(window.innerWidth<=1100&&coarse);
@@ -2557,6 +3257,12 @@ function render(){
  syncGlobalSearchVisibility();
  $("#content").innerHTML=(renderers[state.page]||renderInicio)();
  $$("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===state.page));
+ const familiesBadge=$("#familiesCountBadge");
+ if(familiesBadge){
+   const n=digitalFamiliesOverviewRows().length;
+   familiesBadge.textContent=String(n);
+   familiesBadge.hidden=n===0;
+ }
  bind();
  requestAnimationFrame(()=>{syncWeeklyStickyColumns();syncDigitalStickyColumns();});
  updateLiveStatusUI();
@@ -2609,7 +3315,15 @@ function openMovementDetail(m){currentMovementId=m.id;$("#mdTitle").textContent=
 function itemForMovement(m){return productByCode(m.code)||state.inventory.find(p=>p.name===m.product)}
 function openQty(m){let p=itemForMovement(m);if(!p)return toast("No se encontró el producto.");editingMovementId=m.id;$("#eqCode").textContent=m.code;$("#eqName").textContent=m.product;$("#eqQty").value=m.qty;$("#eqQty").max=(+p.stock||0)+(+m.qty||0);$("#eqInfo").innerHTML=`Cantidad actual: <b>${m.qty}</b> · Existencia actual: <b>${p.stock}</b> · Máximo permitido: <b>${(+p.stock||0)+(+m.qty||0)}</b>`;$("#editQtyDialog").showModal();setTimeout(()=>$("#eqQty").select(),30)}
 function bind(){
- $$("[data-go]").forEach(b=>b.onclick=()=>nav(b.dataset.go));$$("[data-new-product]").forEach(b=>b.onclick=()=>openProduct());
+ $$("[data-go]").forEach(b=>b.onclick=()=>nav(b.dataset.go));
+ $$('[data-families-page-view]').forEach(b=>b.onclick=()=>{digitalFamiliesPageView=b.dataset.familiesPageView==="history"?"history":"families";render();});
+ $$('[data-family-history]').forEach(b=>b.onclick=async()=>{digitalHistorySelectedId=b.dataset.familyHistory||"";digitalFamiliesPageView="history";digitalHistoryLoadedArchive=null;render();await ensureDigitalArchiveLoaded(digitalHistorySelectedId,true);});
+ $$('[data-print-family-history]').forEach(b=>b.onclick=()=>printDigitalHistoryArchive(digitalHistoryMetaById(b.dataset.printFamilyHistory)));
+ $$('[data-open-counted-family]').forEach(b=>b.onclick=()=>{const fam=b.dataset.openCountedFamily||"";const resp=b.dataset.responsible||"";state.digitalFilter.responsible=resp||state.digitalFilter.responsible||"";state.digitalFilter.family=fam;state.digitalFilter.search="";digitalView="current";saveLocal();nav("digital");});
+ $$('[data-new-counted-family]').forEach(b=>b.onclick=()=>{const fam=b.dataset.newCountedFamily||"";if(!fam)return;if(!confirm(`¿Iniciar un NUEVO conteo de la familia ${fam} con las existencias actuales?\n\nEl historial anterior quedará intacto y el Físico actual de esta familia comenzará vacío.`))return;startNewDigitalFamilyCount(fam,b.dataset.responsible||"");digitalView="current";nav("digital");toast(`Nuevo conteo iniciado para ${fam}.`);});
+ const familiesHist=$("#familiesHistorySelect"); if(familiesHist)familiesHist.onchange=async()=>{digitalHistorySelectedId=familiesHist.value;digitalHistoryLoadedArchive=null;render();await ensureDigitalArchiveLoaded(digitalHistorySelectedId,true);};
+ const familiesPrint=$("#familiesPrintHistoryBtn"); if(familiesPrint)familiesPrint.onclick=()=>printDigitalHistoryArchive(digitalHistoryMetaById(digitalHistorySelectedId));
+ $$('[data-open-digital-history]').forEach(b=>b.onclick=()=>{digitalView="history";nav("digital");});$$("[data-new-product]").forEach(b=>b.onclick=()=>openProduct());
  $$("[data-view-product]").forEach(b=>b.onclick=()=>{let p=state.inventory.find(x=>x.id===b.dataset.viewProduct);if(p)openProductDetail(p)});
  $$("[data-view-movement]").forEach(b=>b.onclick=()=>{let m=state.movements.find(x=>x.id===b.dataset.viewMovement);if(m)openMovementDetail(m)});
  $$("[data-edit-movement]").forEach(b=>b.onclick=()=>{let m=state.movements.find(x=>x.id===b.dataset.editMovement);if(m)openQty(m)});
@@ -2859,6 +3573,14 @@ function bindCount(){
  $$("[data-weekly-physical]").forEach(input=>{
    const productId=input.dataset.weeklyPhysical,product=[...state.inventory,...weeklyExtraProducts()].find(p=>p.id===productId);
    if(!product)return;
+   const row=input.closest("tr");
+   const refreshRowMark=()=>{
+     if(!row)return;
+     const raw=input.value.trim();
+     row.classList.toggle("weekly-row-counted",raw!=="");
+   };
+   input.addEventListener("focus",()=>{if(row)row.classList.add("weekly-row-active")});
+   input.addEventListener("blur",()=>{if(row)row.classList.remove("weekly-row-active")});
    const sync=()=>{
      if(!state.weeklyMeta.active||state.weeklyMeta.closed)return;
      const raw=input.value.trim();
@@ -2866,12 +3588,14 @@ function bindCount(){
      if(!state.weeklyCounts[productId])state.weeklyCounts[productId]={physical:"",obs:"",updatedAt:"",confirmed:false,confirmedAt:"",confirmedBy:"",confirmedStock:null};
      state.weeklyCounts[productId].physical=raw===""?"":Number(raw);
      state.weeklyCounts[productId].updatedAt=new Date().toISOString();
+     refreshRowMark();
      const diff=weeklyDiff(product,state.weeklyCounts[productId].physical),st=weeklyStatus(product,state.weeklyCounts[productId].physical);
      const diffEl=$(`[data-weekly-diff="${productId}"]`),statusEl=$(`[data-weekly-status="${productId}"]`);
      if(diffEl)diffEl.textContent=diff===""?"—":`${diff>0?"+":""}${diff}`;
      if(statusEl){statusEl.textContent=st.text;statusEl.className=`chip ${st.cls}`}
      persistWeeklyPatch(productId,{physical:state.weeklyCounts[productId].physical},180);
    };
+   refreshRowMark();
    input.oninput=sync;input.onchange=sync;
  });
  $$("[data-weekly-confirm]").forEach(checkbox=>{
@@ -3305,7 +4029,135 @@ function bindDifferenceActions(){
    btn.onclick=()=>adjustInventoryFromDifference(btn.dataset.adjustDifference);
  });
 }
+function digitalCalculatorFormat(n){
+ if(!Number.isFinite(n))return "Error";
+ const rounded=Math.round((n+Number.EPSILON)*100000000)/100000000;
+ return String(rounded);
+}
+function digitalCalculatorCompute(a,b,op){
+ if(op==="+")return a+b;
+ if(op==="-")return a-b;
+ if(op==="*")return a*b;
+ if(op==="/")return b===0?NaN:a/b;
+ return b;
+}
+function updateDigitalCalculatorUI(){
+ const display=$("#digitalCalculatorDisplay");
+ if(display)display.textContent=digitalCalcDisplay;
+ const target=$("#digitalCalculatorTarget");
+ const p=state.inventory.find(x=>x.id===digitalCalcTargetId);
+ if(target)target.textContent=p?`Resultado → Físico de ${p.code}${p.name?` · ${p.name}`:""}`:"Calculadora libre. Abre 🧮 desde una fila para enviar el resultado a Físico.";
+ const exp=$("#digitalCalculatorExpression");
+ if(exp){
+   const opLabel=digitalCalcOp==="*"?"×":digitalCalcOp==="/"?"÷":digitalCalcOp||"";
+   exp.textContent=digitalCalcStored!==null&&digitalCalcOp?`${digitalCalculatorFormat(digitalCalcStored)} ${opLabel} …`:"Listo para calcular";
+ }
+ const use=$("#digitalCalculatorUse");
+ if(use)use.disabled=!p;
+}
+function resetDigitalCalculator(seed="0"){
+ digitalCalcDisplay=String(seed===""?"0":seed);
+ digitalCalcStored=null;
+ digitalCalcOp=null;
+ digitalCalcWaiting=false;
+ updateDigitalCalculatorUI();
+}
+function openDigitalCalculator(productId=""){
+ if(productId)digitalCalcTargetId=productId;
+ const p=state.inventory.find(x=>x.id===digitalCalcTargetId);
+ const c=p?digitalCountState(p.id):null;
+ resetDigitalCalculator(c&&c.physical!==""?c.physical:"0");
+ const dlg=$("#digitalCalculatorDialog");
+ if(!dlg)return;
+ if(typeof dlg.showModal==="function")dlg.showModal(); else dlg.setAttribute("open","");
+ updateDigitalCalculatorUI();
+}
+function closeDigitalCalculator(){
+ const dlg=$("#digitalCalculatorDialog");
+ if(!dlg)return;
+ if(typeof dlg.close==="function")dlg.close(); else dlg.removeAttribute("open");
+}
+function digitalCalculatorDigit(digit){
+ if(digitalCalcDisplay==="Error"||digitalCalcWaiting){digitalCalcDisplay="0";digitalCalcWaiting=false;}
+ const clean=String(digit);
+ if(digitalCalcDisplay==="0")digitalCalcDisplay=clean==="00"?"0":clean;
+ else if(digitalCalcDisplay.replace(/[^0-9]/g,"").length<12)digitalCalcDisplay+=clean;
+ updateDigitalCalculatorUI();
+}
+function digitalCalculatorChooseOp(op){
+ const current=Number(digitalCalcDisplay);
+ if(!Number.isFinite(current))return resetDigitalCalculator();
+ if(digitalCalcStored!==null&&digitalCalcOp&&!digitalCalcWaiting){
+   const result=digitalCalculatorCompute(digitalCalcStored,current,digitalCalcOp);
+   if(!Number.isFinite(result)){digitalCalcDisplay="Error";digitalCalcStored=null;digitalCalcOp=null;digitalCalcWaiting=true;return updateDigitalCalculatorUI();}
+   digitalCalcDisplay=digitalCalculatorFormat(result);
+   digitalCalcStored=result;
+ }else digitalCalcStored=current;
+ digitalCalcOp=op;
+ digitalCalcWaiting=true;
+ updateDigitalCalculatorUI();
+}
+function digitalCalculatorEquals(){
+ if(digitalCalcStored===null||!digitalCalcOp)return;
+ const current=Number(digitalCalcDisplay);
+ const result=digitalCalculatorCompute(digitalCalcStored,current,digitalCalcOp);
+ if(!Number.isFinite(result)){digitalCalcDisplay="Error";} else digitalCalcDisplay=digitalCalculatorFormat(result);
+ digitalCalcStored=null;
+ digitalCalcOp=null;
+ digitalCalcWaiting=true;
+ updateDigitalCalculatorUI();
+}
+function digitalCalculatorBackspace(){
+ if(digitalCalcDisplay==="Error"||digitalCalcWaiting)return resetDigitalCalculator();
+ digitalCalcDisplay=digitalCalcDisplay.length>1?digitalCalcDisplay.slice(0,-1):"0";
+ updateDigitalCalculatorUI();
+}
+function useDigitalCalculatorResult(){
+ const p=state.inventory.find(x=>x.id===digitalCalcTargetId);
+ if(!p)return toast("Abre la calculadora desde la fila del producto que estás contando.");
+ const value=Number(digitalCalcDisplay);
+ if(!Number.isFinite(value)||value<0||!Number.isInteger(value))return toast("El resultado para Físico debe ser un número entero mayor o igual a 0.");
+ const input=$(`[data-digital-physical="${CSS.escape(p.id)}"]`);
+ if(!input)return toast("La fila ya no está visible. Busca nuevamente el producto.");
+ input.value=String(value);
+ input.dispatchEvent(new Event("input",{bubbles:true}));
+ input.focus();
+ closeDigitalCalculator();
+ toast(`Físico de ${p.code}: ${value}`);
+}
+function bindDigitalCalculator(){
+ const top=$("#digitalCalculatorBtn");
+ if(top)top.onclick=()=>openDigitalCalculator(digitalCalcTargetId||"");
+ $$('[data-digital-calc]').forEach(btn=>{
+   btn.onclick=()=>openDigitalCalculator(btn.dataset.digitalCalc||"");
+ });
+ const dlg=$("#digitalCalculatorDialog");
+ const close=$("#digitalCalculatorClose");
+ if(close)close.onclick=()=>closeDigitalCalculator();
+ if(dlg)dlg.onclick=e=>{if(e.target===dlg)closeDigitalCalculator();};
+ $$('[data-calc-digit]').forEach(btn=>btn.onclick=()=>digitalCalculatorDigit(btn.dataset.calcDigit||"0"));
+ $$('[data-calc-op]').forEach(btn=>btn.onclick=()=>digitalCalculatorChooseOp(btn.dataset.calcOp||"+"));
+ $$('[data-calc-action]').forEach(btn=>{
+   btn.onclick=()=>{
+     const a=btn.dataset.calcAction;
+     if(a==="clear")resetDigitalCalculator();
+     else if(a==="backspace")digitalCalculatorBackspace();
+     else if(a==="equals")digitalCalculatorEquals();
+   };
+ });
+ const reset=$("#digitalCalculatorReset");
+ if(reset)reset.onclick=()=>resetDigitalCalculator();
+ const use=$("#digitalCalculatorUse");
+ if(use)use.onclick=()=>useDigitalCalculatorResult();
+ updateDigitalCalculatorUI();
+}
 function bindDigital(){
+ $$('[data-digital-view]').forEach(btn=>btn.onclick=async()=>{digitalView=btn.dataset.digitalView==="history"?"history":"current";digitalHistoryLoadedArchive=null;render();if(digitalView==="history"&&digitalHistorySelectedId)await ensureDigitalArchiveLoaded(digitalHistorySelectedId,true);});
+ const histSelect=$("#digitalHistorySelect");
+ if(histSelect)histSelect.onchange=async()=>{digitalHistorySelectedId=histSelect.value;digitalHistoryLoadedArchive=null;render();await ensureDigitalArchiveLoaded(digitalHistorySelectedId,true);};
+ const printHist=$("#printDigitalHistoryBtn");
+ if(printHist)printHist.onclick=()=>printDigitalHistoryArchive(digitalHistoryMetaById(digitalHistorySelectedId));
+ if(digitalView==="history")return;
  const responsibleBtn=$("#digitalResponsibleBtn");
  if(responsibleBtn)responsibleBtn.onclick=()=>openDigitalResponsibleDialog();
 
@@ -3314,6 +4166,8 @@ function bindDigital(){
 
  const printFamilyBtn=$("#printDigitalFamilyBtn");
  if(printFamilyBtn)printFamilyBtn.onclick=()=>printDigitalFamilySheet();
+
+ bindDigitalCalculator();
 
  const family=$("#digitalFamilySelect");
  if(family)family.onchange=()=>{
@@ -3375,16 +4229,36 @@ function bindDigital(){
  bindDigitalInlineOnly();
 }
 function bindDigitalInlineOnly(){
+ $$('[data-digital-calc]').forEach(btn=>{
+   btn.onclick=()=>openDigitalCalculator(btn.dataset.digitalCalc||"");
+ });
  $$("[data-digital-physical]").forEach(input=>{
    const id=input.dataset.digitalPhysical,p=state.inventory.find(x=>x.id===id);
    if(!p)return;
+   const row=input.closest("tr");
+   const syncRowVisual=()=>{
+     if(!row)return;
+     const hasPhysical=String(input.value||"").trim()!=="";
+     row.classList.toggle("digital-row-counted",hasPhysical);
+   };
+   input.onfocus=()=>{
+     digitalCalcTargetId=id;
+     if(row)row.classList.add("digital-row-active");
+   };
+   input.onblur=()=>{
+     if(row)row.classList.remove("digital-row-active");
+     syncRowVisual();
+   };
    input.oninput=()=>{
+     syncRowVisual();
      if(digitalFamilyClosed(state.digitalFilter.family))return;
      const raw=input.value.trim();
      if(raw!==""&&(!/^\d+$/.test(raw)||Number(raw)<0)){toast("El físico debe ser un número entero mayor o igual a 0.");return}
      if(!state.digitalCounts[id])state.digitalCounts[id]={physical:"",obs:"",detectedAt:"",responsible:state.digitalFilter.responsible||""};
      state.digitalCounts[id].physical=raw===""?"":Number(raw);
      state.digitalCounts[id].responsible=state.digitalFilter.responsible||state.digitalCounts[id].responsible||"";
+     state.digitalCounts[id].updatedAt=new Date().toISOString();
+     if(raw!=="")state.digitalCounts[id].expectedAtCount=Number(p.stock||0);
 
      const physical=state.digitalCounts[id].physical;
      const diff=digitalDiff(p,physical);
@@ -3399,6 +4273,13 @@ function bindDigitalInlineOnly(){
 
      syncDifferenceHistoryFromDigital(p);
 
+     const diffEl=$(`[data-digital-diff="${id}"]`);
+     if(diffEl){
+       const diffText=diff===""?"—":`${Number(diff)>0?"+":""}${Number(diff)}`;
+       const diffCls=diff===""?"is-empty":Number(diff)===0?"is-zero":Number(diff)>0?"is-positive":"is-negative";
+       diffEl.textContent=diffText;
+       diffEl.className=`digital-diff-value ${diffCls}`;
+     }
      const st=digitalStatus(p,physical);
      const statusEl=$(`[data-digital-status="${id}"]`);
      if(statusEl){statusEl.textContent=st.text;statusEl.className=`chip ${st.cls}`}
@@ -3412,6 +4293,7 @@ function bindDigitalInlineOnly(){
      if(digitalFamilyClosed(state.digitalFilter.family))return;
      if(!state.digitalCounts[id])state.digitalCounts[id]={physical:"",obs:"",detectedAt:"",responsible:state.digitalFilter.responsible||""};
      state.digitalCounts[id].obs=input.value;
+     state.digitalCounts[id].updatedAt=new Date().toISOString();
      const p=state.inventory.find(x=>x.id===id);
      if(p)syncDifferenceHistoryFromDigital(p);
      saveLocal();
@@ -3502,7 +4384,7 @@ async function getBaseProductsFromSheets(){
    const code=normalizeImportCode(p.code);
    if(code)map.set(code,{
      code,
-     catalog:String(p.catalog||"").trim(),
+     catalog:catalogText(p.catalog).trim(),
      description:String(p.description||"").trim(),
      family:String(p.family||"").trim(),
      min:Number(p.min||0)||0,
@@ -3531,7 +4413,7 @@ function buildImportedInventory(reportItems,baseMap){
    if(!base){
      newPending.push({
        code:row.code,
-       catalog:String(previous?.catalog||"").trim(),
+       catalog:catalogText(previous?.catalog).trim(),
        description:String(previous?.description||row.name||"").trim(),
        family:String(previous?.family||row.family||"").trim(),
        min:Number(previous?.min||old?.min||0)||0,
@@ -3548,7 +4430,7 @@ function buildImportedInventory(reportItems,baseMap){
    return {
      id:old?.id||uid(),
      code:row.code,
-     catalog:base?.catalog||previous?.catalog||old?.catalog||"",
+     catalog:catalogText(base?.catalog??previous?.catalog??old?.catalog??""),
      name:row.name,
      family:row.family,
      stock,
@@ -3653,6 +4535,24 @@ async function importInventoryTxt(file){
      }
    }
 
+   // V80: antes de reemplazar existencias, archivar el conteo digital actual.
+   // Si una importación anterior se canceló y el mismo conteo ya quedó protegido,
+   // no se crea un duplicado: se reutiliza el respaldo por checksum + versión.
+   const archivedDigital=archiveAllCurrentDigitalCounts("Importación de inventario",true);
+   saveLocal();
+   const pendingDigital=pendingDigitalArchiveCount();
+   if(pendingDigital>0){
+     toast(`Respaldando ${pendingDigital} archivo(s) de Inventario Digital...`);
+     const digitalBackupOk=await syncDigitalArchiveQueue(true);
+     if(!digitalBackupOk){
+       toast("IMPORTACIÓN CANCELADA: primero debe quedar respaldado el Historial de Inventario Digital en Google Sheets.");
+       return;
+     }
+   }
+   if(archivedDigital.total>0&&archivedDigital.created===0&&archivedDigital.alreadyProtected>0){
+     console.info(`V80: ${archivedDigital.alreadyProtected} familia(s) ya tenían respaldo equivalente; no se duplicó el historial.`);
+   }
+
    const importNow=new Date().toISOString();
    state.inventory=built.products.map(p=>({...p,stockUpdatedAt:importNow}));
    state.inventoryVersionAt=importNow;
@@ -3681,7 +4581,7 @@ async function importInventoryTxt(file){
    }
 
    render();
-   toast(`Inventario actualizado · ${archivedDifferences} diferencia(s) conservada(s) · ${built.disappeared} nuevo(s) Sin Existencia.`);
+   toast(`Inventario actualizado · ${archivedDigitalFamilies} familia(s) de Inventario Digital archivada(s) · ${archivedDifferences} diferencia(s) conservada(s) · ${built.disappeared} nuevo(s) Sin Existencia.`);
  }catch(err){
    console.error(err);
    toast(err?.message||"No se pudo importar el inventario.");
@@ -3714,7 +4614,7 @@ let baseProductQueueTimer=null,baseProductQueueSyncing=false;
 function enqueueBaseProductSync(product){
  const p={
    code:String(product.code||"").trim(),
-   catalog:String(product.catalog||"").trim(),
+   catalog:catalogText(product.catalog).trim(),
    description:String(product.description||"").trim(),
    family:String(product.family||"").trim(),
    min:Number(product.min||0)||0,
@@ -3731,12 +4631,13 @@ function enqueueBaseProductSync(product){
  scheduleBaseProductQueueSync();
 }
 function scheduleBaseProductQueueSync(delay=1500){
+ if(authState.localOnly)return;
  clearTimeout(baseProductQueueTimer);
  baseProductQueueTimer=setTimeout(()=>syncBaseProductQueue(),delay);
 }
 async function syncBaseProductQueue(){
  if(baseProductQueueSyncing||!state.baseProductSyncQueue.length)return;
- if(!cloudConfig.enabled||!cloudReady())return;
+ if(authState.localOnly||!cloudConfig.enabled||!cloudReady())return;
  baseProductQueueSyncing=true;
  try{
    const batch=state.baseProductSyncQueue.slice(0,100);
@@ -3781,7 +4682,7 @@ function updateBaseQueueUI(){
 async function saveOneBaseProductDirect(p){
  const r=await cloudJsonp("save_base_product",{
    code:String(p.code||"").trim(),
-   catalog:String(p.catalog||"").trim(),
+   catalog:catalogText(p.catalog).trim(),
    description:String(p.description||"").trim(),
    family:String(p.family||"").trim(),
    min:Number(p.min||0)||0,
@@ -4040,11 +4941,20 @@ function bindConfig(){
    try{await setCentralStaffEntry(t==="tech"?"technician":"keeper",name,false);render();toast("Personal actualizado en Google Sheets.")}catch(err){toast(err?.message||"No se pudo actualizar el personal.")}
  });
  const refreshStaff=$("#refreshCentralStaff");if(refreshStaff)refreshStaff.onclick=async()=>{await syncCentralStaff(false);render()};
+ const securityLoginBtn=$("#cloudSecurityLogin");
+ if(securityLoginBtn)securityLoginBtn.onclick=()=>openSecurityLogin("Ingresa el PIN para activar la sincronización segura.",true);
+ const securityLogoutBtn=$("#cloudSecurityLogout");
+ if(securityLogoutBtn)securityLogoutBtn.onclick=async()=>{await logoutServerSession();render();toast("Sesión segura cerrada. El sistema queda sin sincronización hasta volver a ingresar el PIN.");};
 
+ const proxyCheck=$("#cloudProxy"),tokenInput=$("#cloudToken");
+ if(proxyCheck&&tokenInput)proxyCheck.onchange=()=>{
+   tokenInput.disabled=proxyCheck.checked;
+   if(proxyCheck.checked)tokenInput.value="";
+ };
  const readCloudForm=()=>{
    cloudConfig.url=normalizeCloudUrl($("#cloudUrl")?.value||cloudConfig.url);
-   cloudConfig.token=($("#cloudToken")?.value||cloudConfig.token).trim();
    cloudConfig.proxy=!!$("#cloudProxy")?.checked;
+   cloudConfig.token=cloudConfig.proxy?"":($("#cloudToken")?.value||cloudConfig.token).trim();
    cloudConfig.enabled=!!$("#cloudEnabled")?.checked;
    cloudConfig.autoSync=!!$("#cloudAutoSync")?.checked;
    saveCloudConfig();
@@ -4064,6 +4974,11 @@ function bindConfig(){
  const testBtn=$("#testCloudConnection");
  if(testBtn)testBtn.onclick=async()=>{
    readCloudForm();
+   if(cloudConfig.proxy){
+     authState.localOnly=false;
+     const ok=await checkServerAuth(false);
+     if(!ok)return;
+   }
    await testCloudConnection(true);
  };
 
@@ -4115,7 +5030,7 @@ $("#productForm").onsubmit=e=>{
  e.preventDefault();
 
  const code=$("#pCode").value.trim();
- const catalog=$("#pCatalog").value.trim();
+ const catalog=catalogText($("#pCatalog").value).trim();
  const name=$("#pName").value.trim();
  const family=$("#pFamily").value.trim();
  const location=$("#pLocation").value.trim();
@@ -4213,6 +5128,36 @@ $("#editQtyForm").onsubmit=async e=>{
 }
 $("#editProductFromDetail").onclick=()=>{let p=state.inventory.find(x=>x.id===currentProductId);$("#productDetailDialog").close();if(p)openProduct(p)}
 $$("[data-close]").forEach(b=>b.onclick=()=>document.getElementById(b.dataset.close).close());
+const securityForm=$("#securityLoginForm");
+if(securityForm)securityForm.onsubmit=async e=>{
+ e.preventDefault();
+ const pin=String($("#securityPin")?.value||"");
+ if(!pin)return setSecurityMessage("Ingresa el PIN.",true);
+ const submit=$("#securityLoginSubmit");if(submit)submit.disabled=true;
+ setSecurityMessage("Validando acceso seguro...",false);
+ try{
+   await loginServerPin(pin);
+   if($("#securityPin"))$("#securityPin").value="";
+   setSecurityMessage("Acceso correcto. Sincronizando Google Sheets...",false);
+   await resumeCentralSyncAfterAuth();
+   toast("Sesión segura iniciada · Auto Sync activo.");
+ }catch(err){setSecurityMessage(err?.message||"PIN incorrecto.",true);}
+ finally{if(submit)submit.disabled=false;}
+};
+const securityLocal=$("#securityLocalOnly");if(securityLocal)securityLocal.onclick=()=>{
+ authState.localOnly=true;
+ authState.authenticated=false;
+ clearTimeout(cloudSyncTimer);cloudSyncTimer=null;
+ clearTimeout(differenceHistorySyncTimer);differenceHistorySyncTimer=null;
+ clearTimeout(baseProductQueueTimer);baseProductQueueTimer=null;
+ stopLivePolling();
+ centralLastError="";
+ cloudConfig.status="local";saveCloudConfig();updateCloudStatusUI();updateLiveStatusUI();
+ closeSecurityLogin();
+ render();
+ toast("Modo solo local activo · la sincronización está pausada en esta sesión.");
+};
+
 $$("[data-page]").forEach(b=>b.onclick=()=>nav(b.dataset.page));
 $("#menuBtn").onclick=openMenu;
 $("#moreBtn").onclick=openMenu;
@@ -4248,7 +5193,7 @@ document.addEventListener("click",()=>{
  if(dm)dm.hidden=true;
 });
 window.addEventListener("online",()=>{
- if(cloudConfig.enabled&&cloudReady()){
+ if(!authState.localOnly&&cloudConfig.enabled&&cloudReady()){
    if(cloudConfig.autoSync){
      if(localChangeSerial>lastPushedSerial)queueCloudSync(350);
      else pollLiveEvents(true);
@@ -4257,11 +5202,12 @@ window.addEventListener("online",()=>{
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(350);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(350);
    if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),500);
+   if(pendingDigitalArchiveCount())setTimeout(()=>syncDigitalArchiveQueue(false),650);
  }
 });
 document.addEventListener("visibilitychange",()=>{
  if(document.visibilityState==="hidden")stopLivePolling();
- if(document.visibilityState==="visible"&&cloudConfig.enabled&&cloudReady()){
+ if(document.visibilityState==="visible"&&!authState.localOnly&&cloudConfig.enabled&&cloudReady()){
    if(cloudConfig.autoSync){
      if(localChangeSerial>lastPushedSerial)queueCloudSync(300);
      else pollLiveEvents(true);
@@ -4270,18 +5216,17 @@ document.addEventListener("visibilitychange",()=>{
    if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(600);
    if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(600);
    if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),700);
+   if(pendingDigitalArchiveCount())setTimeout(()=>syncDigitalArchiveQueue(false),850);
  }
 });
 render();
 setTimeout(async()=>{
  if(cloudConfig.enabled&&cloudReady()){
    saveCloudConfig();
-   await syncFromCloud(true);
-   await recoverDifferenceHistoryFromSheets(true);
-   await recoverWeeklyHistoryList(true);
-   await initializeLiveSync();
-   if(pendingDifferenceSyncCount())scheduleDifferenceHistorySync(900);
-   if(pendingWeeklyArchiveCount())setTimeout(()=>syncWeeklyArchiveQueue(false),1200);
-   if(state.baseProductSyncQueue?.length)scheduleBaseProductQueueSync(1800);
+   if(cloudConfig.proxy){
+     const authOk=await checkServerAuth(true);
+     if(!authOk)return;
+   }
+   await resumeCentralSyncAfterAuth();
  }
 },250);

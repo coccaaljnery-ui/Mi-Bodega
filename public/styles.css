@@ -3987,3 +3987,601 @@ input,select,textarea{
     max-width:230px !important;
   }
 }
+
+/* ==========================================================
+   V70 - INVENTARIO DIGITAL + DIFERENCIAS PROFESIONALES
+   ========================================================== */
+.digital-table{min-width:1235px}
+.digital-table th:nth-child(8),
+.digital-table td:nth-child(8){
+  min-width:78px;
+  width:78px;
+  text-align:center;
+  vertical-align:middle;
+}
+.digital-table th:nth-child(10),
+.digital-table td:nth-child(10){
+  min-width:105px !important;
+  width:105px;
+  text-align:center;
+}
+.digital-table th:nth-child(11),
+.digital-table td:nth-child(11){
+  min-width:170px;
+}
+.digital-diff-cell{font-variant-numeric:tabular-nums}
+.digital-diff-value{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:44px;
+  min-height:30px;
+  padding:4px 9px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+  line-height:1;
+  white-space:nowrap;
+}
+.digital-diff-value.is-empty{color:var(--muted);background:transparent}
+.digital-diff-value.is-zero{color:#176b34;background:#dff4e5}
+.digital-diff-value.is-negative{color:#a62920;background:#ffe3df}
+.digital-diff-value.is-positive{color:#075985;background:#dff1ff}
+
+.difference-help{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  margin:0 0 12px;
+  padding:10px 12px;
+  border:1px solid var(--outline);
+  border-radius:14px;
+  background:var(--primary-soft);
+}
+.difference-help>div:first-child{display:flex;flex-direction:column;gap:2px}
+.difference-help b{font-size:12px}
+.difference-help span{font-size:11px;color:var(--muted)}
+.difference-help-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.difference-help-legend span{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:4px 8px;
+  border-radius:999px;
+  background:var(--surface);
+  border:1px solid var(--outline);
+  font-weight:750;
+  white-space:nowrap;
+}
+.difference-help-legend .diff-negative{color:#a62920;background:#fff1ef}
+.difference-help-legend .diff-positive{color:#075985;background:#eef8ff}
+
+.difference-actions{gap:6px;flex-wrap:nowrap}
+.difference-action-btn{
+  width:auto !important;
+  min-width:38px;
+  padding:0 9px !important;
+  gap:5px;
+  white-space:nowrap;
+}
+.difference-action-btn .action-label{font-size:10px;font-weight:800}
+.persistent-differences-table th:nth-child(8),
+.persistent-differences-table td:nth-child(8),
+.persistent-differences-table th:nth-child(9),
+.persistent-differences-table td:nth-child(9),
+.persistent-differences-table th:nth-child(10),
+.persistent-differences-table td:nth-child(10){
+  text-align:center;
+  white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+
+@media(max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .digital-table{min-width:1300px !important}
+  .difference-help{align-items:flex-start;flex-direction:column}
+  .difference-help-legend{justify-content:flex-start}
+  .difference-action-btn .action-label{display:none}
+  .difference-action-btn{width:38px !important;padding:0 !important}
+}
+
+/* ==========================================================
+   V72 - CALCULADORA INTEGRADA EN INVENTARIO DIGITAL
+   ========================================================== */
+.digital-table{min-width:1325px !important}
+.digital-table th:nth-child(8),
+.digital-table td:nth-child(8){
+  min-width:64px !important;
+  width:64px !important;
+  max-width:64px !important;
+  text-align:center !important;
+  padding-left:6px !important;
+  padding-right:6px !important;
+}
+.digital-table th:nth-child(9),
+.digital-table td:nth-child(9){
+  min-width:78px !important;
+  width:78px !important;
+  max-width:78px !important;
+  text-align:center !important;
+}
+.digital-table th:nth-child(10),
+.digital-table td:nth-child(10){
+  min-width:88px !important;
+  width:88px !important;
+  max-width:110px !important;
+  text-align:center !important;
+}
+.digital-table th:nth-child(11),
+.digital-table td:nth-child(11){
+  min-width:105px !important;
+  width:105px !important;
+  max-width:115px !important;
+  text-align:center !important;
+}
+.digital-table th:nth-child(12),
+.digital-table td:nth-child(12){
+  min-width:170px !important;
+  width:170px !important;
+}
+.digital-calc-cell{vertical-align:middle !important}
+.digital-calc-row-btn{
+  width:38px;
+  height:38px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid var(--outline);
+  border-radius:11px;
+  background:var(--surface);
+  font-size:18px;
+  line-height:1;
+  cursor:pointer;
+  transition:background .16s ease,border-color .16s ease,transform .08s ease;
+}
+.digital-calc-row-btn:hover{background:var(--primary-soft);border-color:var(--primary)}
+.digital-calc-row-btn:active{transform:scale(.96)}
+.digital-calc-row-btn:disabled{opacity:.45;cursor:not-allowed}
+
+.digital-calculator-dialog{
+  width:min(390px,calc(100% - 28px));
+  max-width:390px;
+  border:0;
+  border-radius:24px;
+  padding:0;
+  background:transparent;
+  color:var(--text);
+  box-shadow:0 24px 70px rgba(16,24,40,.28);
+}
+.digital-calculator-dialog::backdrop{
+  background:rgba(20,24,38,.38);
+  backdrop-filter:blur(2px);
+}
+.digital-calculator-shell{
+  background:var(--surface);
+  border:1px solid var(--outline);
+  border-radius:24px;
+  overflow:hidden;
+}
+.digital-calculator-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  padding:18px 18px 12px;
+  border-bottom:1px solid var(--outline);
+}
+.digital-calculator-head small{font-size:9px;font-weight:850;letter-spacing:.12em;color:var(--muted)}
+.digital-calculator-head h3{margin:3px 0 3px;font-size:20px}
+.digital-calculator-head p{margin:0;color:var(--muted);font-size:11px;line-height:1.35}
+.digital-calculator-display{
+  margin:16px 16px 4px;
+  min-height:66px;
+  padding:12px 14px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  overflow:hidden;
+  border-radius:16px;
+  background:var(--card2);
+  border:1px solid var(--outline);
+  font-size:32px;
+  line-height:1;
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;
+}
+.digital-calculator-expression{
+  min-height:18px;
+  padding:0 18px 8px;
+  text-align:right;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:700;
+}
+.digital-calculator-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+  padding:8px 16px 14px;
+}
+.calc-key{
+  min-height:48px;
+  border:1px solid var(--outline);
+  border-radius:14px;
+  background:var(--surface);
+  color:var(--text);
+  font-size:18px;
+  font-weight:800;
+  cursor:pointer;
+}
+.calc-key:hover{background:var(--card2)}
+.calc-key:active{transform:scale(.97)}
+.calc-key-soft{background:var(--card2)}
+.calc-key-op{background:var(--primary-soft);color:var(--primary);font-size:20px}
+.calc-key-equals{grid-row:span 2;background:var(--primary);color:#fff;border-color:var(--primary)}
+.calc-key-zero{grid-column:span 2}
+.digital-calculator-actions{
+  display:grid;
+  grid-template-columns:110px 1fr;
+  gap:8px;
+  padding:0 16px 12px;
+}
+.digital-calculator-actions .btn{min-height:44px}
+.digital-calculator-note{
+  margin:0;
+  padding:0 18px 16px;
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.4;
+}
+
+/* La barra superior ahora tiene un control adicional. */
+.digital-tools{
+  grid-template-columns:minmax(175px,1.05fr) minmax(180px,1.05fr) minmax(165px,.9fr) auto auto auto !important;
+}
+
+@media(max-width:1100px){
+  .digital-tools{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+}
+@media(max-width:760px){
+  .digital-tools{grid-template-columns:1fr !important}
+  .digital-calculator-dialog{width:min(360px,calc(100% - 18px));border-radius:20px}
+  .digital-calculator-shell{border-radius:20px}
+  .digital-calculator-head{padding:14px 14px 10px}
+  .digital-calculator-display{margin:12px 12px 4px;min-height:62px;font-size:30px}
+  .digital-calculator-grid{padding:8px 12px 12px;gap:7px}
+  .calc-key{min-height:48px;font-size:17px}
+  .digital-calculator-actions{padding:0 12px 10px;grid-template-columns:96px 1fr}
+  .digital-calculator-note{padding:0 14px 14px}
+  .digital-table{min-width:1390px !important}
+}
+
+/* ==========================================================
+   V73 - INVENTARIO DIGITAL: TABLA A TODO EL ANCHO + FILA MARCADA
+   ========================================================== */
+
+/* PC: aprovechar todo el espacio disponible del panel. */
+@media (min-width:1101px){
+  .digital-panel .table-wrap{
+    width:100% !important;
+  }
+  .digital-table{
+    width:100% !important;
+    min-width:100% !important;
+    table-layout:auto !important;
+  }
+
+  /* Más espacio donde realmente se necesita. */
+  .digital-table th:nth-child(2),
+  .digital-table td:nth-child(2){
+    min-width:135px !important;
+    width:145px !important;
+    max-width:none !important;
+  }
+  .digital-table th:nth-child(3),
+  .digital-table td:nth-child(3){
+    min-width:145px !important;
+    width:160px !important;
+    max-width:none !important;
+  }
+  .digital-table th:nth-child(4),
+  .digital-table td:nth-child(4){
+    min-width:280px !important;
+    width:33% !important;
+    max-width:none !important;
+  }
+
+  /* Mantener compactas las columnas de apoyo. */
+  .digital-table th:nth-child(1),
+  .digital-table td:nth-child(1){width:62px !important;min-width:62px !important;max-width:62px !important}
+  .digital-table th:nth-child(5),
+  .digital-table td:nth-child(5){width:72px !important;min-width:72px !important}
+  .digital-table th:nth-child(6),
+  .digital-table td:nth-child(6){width:70px !important;min-width:70px !important}
+  .digital-table th:nth-child(7),
+  .digital-table td:nth-child(7){width:165px !important;min-width:165px !important}
+  .digital-table th:nth-child(8),
+  .digital-table td:nth-child(8){width:58px !important;min-width:58px !important;max-width:58px !important}
+  .digital-table th:nth-child(9),
+  .digital-table td:nth-child(9){width:74px !important;min-width:74px !important;max-width:74px !important}
+  .digital-table th:nth-child(10),
+  .digital-table td:nth-child(10){width:82px !important;min-width:82px !important;max-width:92px !important}
+  .digital-table th:nth-child(11),
+  .digital-table td:nth-child(11){width:108px !important;min-width:108px !important;max-width:118px !important}
+  .digital-table th:nth-child(12),
+  .digital-table td:nth-child(12){width:180px !important;min-width:180px !important}
+}
+
+/* Código, catálogo y descripción siempre completos en una línea. */
+.digital-table th:nth-child(2),
+.digital-table td:nth-child(2),
+.digital-table th:nth-child(3),
+.digital-table td:nth-child(3),
+.digital-table th:nth-child(4),
+.digital-table td:nth-child(4){
+  white-space:nowrap !important;
+  word-break:normal !important;
+  overflow-wrap:normal !important;
+  text-overflow:clip !important;
+  overflow:visible !important;
+}
+
+/* Una fila contada queda visualmente marcada. */
+:root{
+  --digital-counted-row:#eef4ff;
+  --digital-active-row:#dfe9ff;
+  --digital-counted-edge:#7a96f7;
+}
+.dark{
+  --digital-counted-row:#202a43;
+  --digital-active-row:#29375a;
+  --digital-counted-edge:#8ea7ff;
+}
+.digital-table tbody tr td{
+  transition:background-color .16s ease,border-color .16s ease;
+}
+.digital-table tbody tr.digital-row-counted td{
+  background:var(--digital-counted-row) !important;
+}
+.digital-table tbody tr.digital-row-counted td:first-child{
+  box-shadow:inset 4px 0 0 var(--digital-counted-edge);
+}
+.digital-table tbody tr.digital-row-active td{
+  background:var(--digital-active-row) !important;
+}
+.digital-table tbody tr.digital-row-active td:first-child{
+  box-shadow:inset 5px 0 0 var(--primary);
+}
+
+/* En móvil/tablet conserva scroll horizontal y las columnas fijas de V60. */
+@media (max-width:820px),
+       (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .digital-table{
+    width:max-content !important;
+    min-width:1460px !important;
+  }
+  .digital-table th:nth-child(2),
+  .digital-table td:nth-child(2){min-width:135px !important;width:max-content !important}
+  .digital-table th:nth-child(3),
+  .digital-table td:nth-child(3){min-width:145px !important;width:max-content !important}
+  .digital-table th:nth-child(4),
+  .digital-table td:nth-child(4){min-width:270px !important;width:max-content !important}
+
+  /* El color también cubre las columnas sticky. */
+  .digital-table tbody tr.digital-row-counted td:nth-child(1),
+  .digital-table tbody tr.digital-row-counted td:nth-child(2),
+  .digital-table tbody tr.digital-row-counted td:nth-child(3){
+    background:var(--digital-counted-row) !important;
+  }
+  .digital-table tbody tr.digital-row-active td:nth-child(1),
+  .digital-table tbody tr.digital-row-active td:nth-child(2),
+  .digital-table tbody tr.digital-row-active td:nth-child(3){
+    background:var(--digital-active-row) !important;
+  }
+}
+
+/* ==========================================================
+   V75 - MÓVIL/TABLET: SIN BARRA DE NAVEGACIÓN INFERIOR
+   Se usa únicamente el menú hamburguesa/drawer en pantallas móviles.
+   ========================================================== */
+@media (max-width:820px){
+  .bottom-nav{
+    display:none !important;
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  body{
+    padding-bottom:0 !important;
+  }
+
+  .content,
+  #content{
+    padding-bottom:24px !important;
+  }
+
+  .toast{
+    bottom:calc(18px + var(--safe)) !important;
+  }
+}
+
+/* Tablet táctil horizontal: tampoco mostrar la barra inferior. */
+@media (min-width:821px) and (max-width:1100px) and (pointer:coarse){
+  .bottom-nav{
+    display:none !important;
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  body{
+    padding-bottom:0 !important;
+  }
+
+  .toast{
+    bottom:calc(18px + var(--safe)) !important;
+  }
+}
+
+/* ==========================================================
+   V76 - DASHBOARD DE DIFERENCIAS + MARCADO DE CONTEO SEMANAL
+   ========================================================== */
+.stat-icon{display:inline-block;font-weight:900;line-height:1}
+.stat-action{
+  appearance:none;-webkit-appearance:none;width:100%;
+  border:1px solid transparent;text-align:left;color:var(--text);font:inherit;
+  cursor:pointer;position:relative;
+  transition:transform .16s ease,border-color .16s ease,background-color .16s ease,box-shadow .16s ease;
+}
+.stat-action .stat-cta{display:block;margin-top:10px;font-size:12px;font-weight:800;color:var(--primary)}
+.stat-differences.has-pending{
+  border-color:rgba(193,112,0,.28);
+  background:linear-gradient(180deg,var(--card),rgba(255,246,222,.72));
+}
+.stat-differences.has-pending b{color:#9a5700}
+.stat-differences.is-clear{border-color:rgba(46,125,79,.20)}
+@media (hover:hover) and (pointer:fine){
+  .stat-action:hover{transform:translateY(-2px);border-color:var(--outline);box-shadow:0 8px 22px rgba(32,38,71,.08)}
+}
+.stat-action:focus-visible{outline:3px solid rgba(67,85,199,.24);outline-offset:2px}
+.dark .stat-differences.has-pending{background:linear-gradient(180deg,var(--card),rgba(112,72,18,.22));border-color:rgba(255,194,91,.24)}
+.dark .stat-differences.has-pending b{color:#ffd28a}
+
+:root{--weekly-counted-row:#eef4ff;--weekly-active-row:#dfe9ff;--weekly-counted-edge:#7a96f7}
+.dark{--weekly-counted-row:#202a43;--weekly-active-row:#29375a;--weekly-counted-edge:#8ea7ff}
+.weekly-table tbody tr td{transition:background-color .16s ease,border-color .16s ease}
+.weekly-table tbody tr.weekly-row-counted:not(.weekly-row-confirmed) td{background:var(--weekly-counted-row) !important}
+.weekly-table tbody tr.weekly-row-counted:not(.weekly-row-confirmed) td:first-child{box-shadow:inset 4px 0 0 var(--weekly-counted-edge)}
+.weekly-table tbody tr.weekly-row-active:not(.weekly-row-confirmed) td{background:var(--weekly-active-row) !important}
+.weekly-table tbody tr.weekly-row-active:not(.weekly-row-confirmed) td:first-child{box-shadow:inset 5px 0 0 var(--primary)}
+.weekly-table tbody tr.weekly-row-confirmed td{background:rgba(46,125,79,.055) !important}
+.weekly-table tbody tr.weekly-row-confirmed td:first-child{box-shadow:inset 4px 0 0 #2e7d4f !important}
+@media(max-width:760px){.stat-action .stat-cta{font-size:11px}}
+
+/* ==========================================================
+   V77 - ALINEACIÓN PROFESIONAL EN DIFERENCIAS
+   Solo modifica Familia, Código, Catálogo y Descripción.
+   ========================================================== */
+/* Familia: centrada */
+.persistent-differences-table th:nth-child(4),
+.persistent-differences-table td:nth-child(4){
+  text-align:center !important;
+  vertical-align:middle !important;
+}
+
+/* Código, Catálogo y Descripción: alineados a la izquierda */
+.persistent-differences-table th:nth-child(5),
+.persistent-differences-table td:nth-child(5),
+.persistent-differences-table th:nth-child(6),
+.persistent-differences-table td:nth-child(6),
+.persistent-differences-table th:nth-child(7),
+.persistent-differences-table td:nth-child(7){
+  text-align:left !important;
+  vertical-align:middle !important;
+}
+
+/* ==========================================================
+   V78 - HISTORIAL PERSISTENTE DE INVENTARIO DIGITAL
+   ========================================================== */
+.digital-view-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.digital-view-tabs .btn{min-height:38px;padding:8px 14px}
+.digital-history-head{align-items:flex-end;gap:16px}
+.digital-history-toolbar{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:12px 0 14px}
+.digital-history-toolbar label{display:grid;gap:6px;min-width:min(620px,100%);font-size:12px;font-weight:700}
+.digital-history-toolbar select{min-height:44px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--text);padding:0 12px;font:inherit}
+.digital-history-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.digital-history-summary>div{background:var(--card2);border:1px solid var(--border);border-radius:14px;padding:11px 12px;min-width:0}
+.digital-history-summary small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+.digital-history-summary b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.digital-history-table{width:100%;border-collapse:separate;border-spacing:0;min-width:1050px}
+.digital-history-table th,.digital-history-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap}
+.digital-history-table th{background:var(--card2);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.digital-history-table th:nth-child(1),.digital-history-table td:nth-child(1),
+.digital-history-table th:nth-child(2),.digital-history-table td:nth-child(2),
+.digital-history-table th:nth-child(3),.digital-history-table td:nth-child(3){text-align:left}
+
+.compact-empty{padding:18px}
+
+@media(max-width:1100px){
+ .digital-history-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:620px){
+ .digital-history-head{align-items:flex-start}
+ .digital-view-tabs{width:100%}.digital-view-tabs .btn{flex:1}
+ .digital-history-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+/* ==========================================================
+   V79 - FAMILIAS CONTADAS COMO MODULO INDEPENDIENTE
+   ========================================================== */
+.nav .nav-badge{
+  width:auto;
+  min-width:24px;
+  height:22px;
+  padding:0 7px;
+  margin-left:auto;
+  border-radius:999px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--primary-soft);
+  color:var(--text);
+  font-size:11px;
+  font-weight:800;
+  line-height:1;
+}
+.nav .nav-badge[hidden]{display:none!important}
+.counted-families-page{display:grid;gap:14px}
+.counted-families-head{align-items:flex-end;gap:16px}
+.families-page-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.families-page-tabs .btn{min-height:40px;padding:8px 14px}
+.counted-family-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.counted-family-summary>div{border:1px solid var(--border);background:var(--card2);border-radius:16px;padding:13px 14px;min-width:0}
+.counted-family-summary small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.counted-family-summary b{font-size:22px;line-height:1.05}
+.counted-families-table{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}
+.counted-families-table th,.counted-families-table td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap}
+.counted-families-table th{background:var(--card2);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.counted-families-table .family-center{text-align:center}
+.counted-families-table td:nth-child(2),.counted-families-table th:nth-child(2){text-align:left}
+.families-actions{justify-content:center;flex-wrap:nowrap}
+
+@media(max-width:1050px) and (min-width:821px){
+  .sidebar .nav .nav-badge{display:none!important}
+}
+@media(max-width:820px){
+  .sidebar .nav .nav-badge{display:inline-flex;margin-left:auto;font-size:10px;min-width:22px;height:20px}
+  .counted-families-head{align-items:flex-start}
+  .families-page-tabs{width:100%}
+  .families-page-tabs .btn{flex:1}
+  .counted-family-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .counted-families-table{min-width:900px}
+}
+@media(max-width:520px){
+  .counted-family-summary{grid-template-columns:1fr 1fr}
+  .counted-family-summary>div{padding:11px 12px}
+  .counted-family-summary b{font-size:19px}
+}
+
+/* ==========================================================
+   V80 - FINAL SEGURA
+   Sesión Netlify + historial digital por archivo en Sheets.
+   ========================================================== */
+.security-login-dialog{border:0;padding:0;background:transparent;max-width:min(460px,calc(100vw - 28px));width:100%}
+.security-login-dialog::backdrop{background:rgba(13,18,32,.58);backdrop-filter:blur(3px)}
+.security-login-card{width:100%;margin:0}
+.security-shield{width:64px;height:64px;border-radius:20px;display:grid;place-items:center;margin:2px auto 4px;background:var(--primary-soft);font-size:31px;border:1px solid var(--border)}
+.security-login-card>label{display:grid;gap:7px;font-weight:700;font-size:12px}
+.security-login-card #securityPin{min-height:46px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--text);padding:0 14px;font:inherit;font-size:16px;letter-spacing:.08em}
+.security-login-message{min-height:20px;font-size:12px;color:var(--muted);padding:2px 1px}
+.security-login-message.error{color:#b3261e;font-weight:700}
+.security-login-actions{justify-content:space-between}
+.digital-history-syncline{display:flex;justify-content:flex-end;margin:-4px 0 12px}
+@media(max-width:520px){
+ .security-login-actions{display:grid;grid-template-columns:1fr;gap:8px}
+ .security-login-actions .btn{width:100%}
+}
+.cloud-security-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:12px 0;padding:12px 14px;border:1px solid var(--border);border-radius:16px;background:var(--card2)}
+.cloud-security-row>div:first-child{display:grid;gap:4px;min-width:0}.cloud-security-row small{color:var(--muted);line-height:1.35}.cloud-security-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:620px){.cloud-security-row{align-items:stretch;flex-direction:column}.cloud-security-actions{display:grid;grid-template-columns:1fr}.cloud-security-actions .btn{width:100%}}
