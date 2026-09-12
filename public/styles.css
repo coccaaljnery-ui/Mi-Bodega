@@ -4585,3 +4585,28 @@ input,select,textarea{
 .cloud-security-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:12px 0;padding:12px 14px;border:1px solid var(--border);border-radius:16px;background:var(--card2)}
 .cloud-security-row>div:first-child{display:grid;gap:4px;min-width:0}.cloud-security-row small{color:var(--muted);line-height:1.35}.cloud-security-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:620px){.cloud-security-row{align-items:stretch;flex-direction:column}.cloud-security-actions{display:grid;grid-template-columns:1fr}.cloud-security-actions .btn{width:100%}}
+
+
+/* ==========================================================
+   V80.2 - ZONA SEGURA · RESTABLECER A FÁBRICA
+   ========================================================== */
+.factory-reset-card{
+  margin-top:18px;
+  padding:18px 20px;
+  border:1px solid rgba(190,45,45,.28);
+  border-radius:20px;
+  background:linear-gradient(135deg,rgba(255,242,242,.95),rgba(255,249,245,.95));
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+}
+.factory-reset-card small{font-size:10px;font-weight:850;letter-spacing:.08em;color:#a33131}
+.factory-reset-card h3{margin:4px 0 6px;font-size:18px}
+.factory-reset-card p{margin:0;max-width:860px;line-height:1.45;color:var(--muted)}
+.factory-reset-btn{flex:0 0 auto;min-width:190px}
+body.dark .factory-reset-card{background:rgba(80,25,25,.24);border-color:rgba(255,145,145,.25)}
+@media(max-width:760px){
+  .factory-reset-card{align-items:stretch;flex-direction:column;padding:16px}
+  .factory-reset-btn{width:100%;min-width:0}
+}

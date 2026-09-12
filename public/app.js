@@ -158,7 +158,8 @@ const state={
  stockoutRecords:get("b34_stockout_records",[]),
  movementTombstones:get("b34_movement_tombstones",{}),
  inventoryVersionAt:get("b34_inventory_version_at",""),
- digitalResetAt:get("b34_digital_reset_at","")
+ digitalResetAt:get("b34_digital_reset_at",""),
+ factoryResetAt:get("b34_factory_reset_at","")
 };
 if(typeof state.weeklyMeta.active!=="boolean")state.weeklyMeta.active=!!(state.weeklyMeta.label&&Object.keys(state.weeklyCounts||{}).length);
 if(!Array.isArray(state.weeklyMeta.productIds)){
@@ -180,6 +181,7 @@ if(!Array.isArray(state.stockoutRecords))state.stockoutRecords=[];
 if(!state.movementTombstones||typeof state.movementTombstones!=="object")state.movementTombstones={};
 if(typeof state.inventoryVersionAt!=="string")state.inventoryVersionAt="";
 if(typeof state.digitalResetAt!=="string")state.digitalResetAt="";
+if(typeof state.factoryResetAt!=="string")state.factoryResetAt="";
 migrateLegacyDigitalHistoryStorage();
 normalizeCatalogFields();
 ensureMasterImportOrder();
@@ -237,6 +239,7 @@ function saveLocal(){
  localStorage.setItem("b34_movement_tombstones",JSON.stringify(state.movementTombstones));
  localStorage.setItem("b34_inventory_version_at",JSON.stringify(state.inventoryVersionAt||""));
  localStorage.setItem("b34_digital_reset_at",JSON.stringify(state.digitalResetAt||""));
+ localStorage.setItem("b34_factory_reset_at",JSON.stringify(state.factoryResetAt||""));
 }
 function save(){
  saveLocal();
@@ -247,7 +250,7 @@ function save(){
 }
 function cloudSnapshot(){
  return {
-   version:"V80 FINAL SEGURA",
+   version:"V80.2 RESTABLECER FABRICA SEGURO",
    savedAt:new Date().toISOString(),
    inventory:state.inventory,
    movements:state.movements,
@@ -266,14 +269,78 @@ function cloudSnapshot(){
    stockoutRecords:state.stockoutRecords,
    movementTombstones:state.movementTombstones,
    inventoryVersionAt:state.inventoryVersionAt||"",
-   digitalResetAt:state.digitalResetAt||""
+   digitalResetAt:state.digitalResetAt||"",
+   factoryResetAt:state.factoryResetAt||""
  };
 }
+function resetLocalToFactory(factoryResetAt=""){
+ const at=String(factoryResetAt||new Date().toISOString());
+ clearTimeout(cloudSyncTimer);cloudSyncTimer=null;
+ try{clearTimeout(differenceHistorySyncTimer);differenceHistorySyncTimer=null;}catch{}
+ try{clearTimeout(baseProductQueueTimer);baseProductQueueTimer=null;}catch{}
+ localChangeSerial=0;lastPushedSerial=0;
+
+ state.page="inicio";
+ state.inventory=[];
+ state.movements=[];
+ state.counts=[];
+ state.weeklyCounts={};
+ state.settings={name:"Mi Bodega",dark:false,technicians:[],keepers:[],logoDataUrl:""};
+ state.weeklyMeta={active:false,label:"",responsible:"",closed:false,filterFamily:"",dateFrom:"",dateTo:"",productIds:[],extraProducts:[]};
+ state.weeklyHistoryMeta=[];
+ state.weeklyArchiveQueue=[];
+ state.digitalHistory=[];
+ state.digitalArchiveQueue=[];
+ state.digitalCounts={};
+ state.digitalFilter={family:"",search:"",field:"name",condition:"none",value1:"",value2:"",responsible:""};
+ state.digitalClosedFamilies={};
+ state.digitalAdjustments=[];
+ state.differenceHistory=[];
+ state.pendingBaseProducts=[];
+ state.baseProductSyncQueue=[];
+ state.stockoutRecords=[];
+ state.movementTombstones={};
+ state.inventoryVersionAt="";
+ state.digitalResetAt=at;
+ state.factoryResetAt=at;
+
+ try{digitalHistoryCache.clear();}catch{}
+ try{digitalHistorySelectedId="";digitalHistoryLoadedArchive=null;digitalHistoryLoadingId="";}catch{}
+ try{weeklyHistorySelectedId="";weeklyHistoryLoadedArchive=null;weeklyHistoryLoading=false;}catch{}
+ try{differenceView="open";digitalView="current";digitalFamiliesPageView="families";weeklyView="current";}catch{}
+ try{liveState.cursor=0;localStorage.setItem(LIVE_CURSOR_KEY,"0");}catch{}
+ localStorage.setItem(CENTRAL_REVISION_KEY,"");
+ centralRevision="";
+ document.body.classList.remove("dark");
+ saveLocal();
+ applyBranding();
+ return at;
+}
+
 function applyCloudSnapshot(data){
  if(!data||typeof data!=="object")return false;
  cloudLoading=true;
  try{
-   if(Array.isArray(data.inventory)){state.inventory=data.inventory;normalizeCatalogFields();ensureMasterImportOrder();state.inventory=orderedProducts(state.inventory);}
+   const remoteFactoryResetAt=String(data.factoryResetAt||"");
+   const localFactoryResetAt=String(state.factoryResetAt||"");
+   const remoteResetMs=Date.parse(remoteFactoryResetAt)||0;
+   const localResetMs=Date.parse(localFactoryResetAt)||0;
+   const forceFactoryReset=!!remoteResetMs && remoteResetMs>localResetMs;
+   if(forceFactoryReset)resetLocalToFactory(remoteFactoryResetAt);
+   if(remoteFactoryResetAt)state.factoryResetAt=remoteFactoryResetAt;
+
+   if(Array.isArray(data.inventory)){
+     // V80.1: una respuesta central vacía nunca borra silenciosamente un inventario local válido.
+     // El borrado total solo debe ocurrir mediante una operación explícita/versionada.
+     if(data.inventory.length || forceFactoryReset || !Array.isArray(state.inventory) || state.inventory.length===0){
+       state.inventory=data.inventory;
+       normalizeCatalogFields();
+       ensureMasterImportOrder();
+       state.inventory=orderedProducts(state.inventory);
+     }else{
+       console.warn("V80.1: inventario central vacío; se conserva el inventario local como medida de seguridad.");
+     }
+   }
    if(Array.isArray(data.movements))state.movements=data.movements;
    if(Array.isArray(data.counts))state.counts=data.counts;
    if(data.weeklyCounts&&typeof data.weeklyCounts==="object"){
@@ -305,6 +372,7 @@ function applyCloudSnapshot(data){
    if(data.movementTombstones&&typeof data.movementTombstones==="object")state.movementTombstones=data.movementTombstones;
    if(typeof data.inventoryVersionAt==="string")state.inventoryVersionAt=data.inventoryVersionAt;
    if(typeof data.digitalResetAt==="string")state.digitalResetAt=data.digitalResetAt;
+   if(typeof data.factoryResetAt==="string")state.factoryResetAt=data.factoryResetAt;
 
    if(typeof state.weeklyMeta.active!=="boolean")state.weeklyMeta.active=false;
    if(!Array.isArray(state.weeklyMeta.productIds))state.weeklyMeta.productIds=[];
@@ -3207,6 +3275,15 @@ function renderConfig(){return `<section class="panel"><div class="panel-head"><
    </div>
  </div>
 
+ <div class="factory-reset-card">
+   <div>
+     <small>ZONA DE SEGURIDAD</small>
+     <h3>Restablecer sistema a fábrica</h3>
+     <p>Borra Inventario, Salidas, Conteo Semanal, Inventario Digital, Diferencias, historiales, Sin Existencia, Códigos Nuevos, Técnicos y Bodegueros. <strong>BASE_PRODUCTOS se conserva</strong>, al igual que la conexión segura de Netlify.</p>
+   </div>
+   <button type="button" class="btn danger-soft factory-reset-btn" id="factoryResetBtn">⚠ Restablecer a fábrica</button>
+ </div>
+
  <div class="actions" style="margin-top:14px"><button class="btn primary" id="saveCfg">Guardar configuración</button></div></section>`}
 const renderers={inicio:renderInicio,inventario:renderInventario,salida:renderSalida,conteo:renderConteo,diferencias:renderDiferencias,sinexist:renderSinExist,digital:renderDigital,familias:renderFamiliesCounted,herramientas:renderHerramientas,nuevos:renderNuevos,config:renderConfig};
 function isTouchTabletOrPhone(){
@@ -5016,6 +5093,38 @@ function bindConfig(){
    updateCloudStatusUI();
    const chk=$("#cloudEnabled");if(chk)chk.checked=false;
    toast("Modo local activado.");
+ };
+
+ const factoryResetBtn=$("#factoryResetBtn");
+ if(factoryResetBtn)factoryResetBtn.onclick=async()=>{
+   readCloudForm();
+   if(!cloudConfig.enabled||!cloudReady())return toast("Para restablecer a fábrica debes estar conectado a Google Sheets.");
+   if(cloudConfig.proxy){
+     authState.localOnly=false;
+     const authOk=await checkServerAuth(false);
+     if(!authOk)return;
+   }
+   const first=confirm("RESTABLECER A FÁBRICA borrará todos los datos operativos e historiales de Mi Bodega en Google Sheets y en este dispositivo. BASE_PRODUCTOS se conservará. ¿Deseas continuar?");
+   if(!first)return;
+   const typed=prompt("Para confirmar escribe exactamente: RESTABLECER");
+   if(String(typed||"").trim().toUpperCase()!=="RESTABLECER")return toast("Restablecimiento cancelado.");
+   if(!confirm("ÚLTIMA CONFIRMACIÓN: se borrarán Inventario, Salidas, Conteos, Diferencias, Historiales, Técnicos y Bodegueros. Esta acción no se puede deshacer. ¿Continuar?"))return;
+   factoryResetBtn.disabled=true;
+   try{
+     toast("Restableciendo Mi Bodega a fábrica...");
+     const r=await cloudPostAction("factory_reset",{confirmText:"RESTABLECER"});
+     const at=resetLocalToFactory(r.factoryResetAt||new Date().toISOString());
+     if(r.revision){centralRevision=String(r.revision);localStorage.setItem(CENTRAL_REVISION_KEY,centralRevision);}
+     render();
+     updateCloudStatusUI();
+     updateLiveStatusUI();
+     try{await initializeLiveSync();}catch{}
+     toast("Sistema restablecido a fábrica. BASE_PRODUCTOS se conservó.");
+     console.info("Restablecimiento de fábrica completado",at);
+   }catch(err){
+     console.error(err);
+     toast(err?.message||"No se pudo restablecer el sistema.");
+   }finally{factoryResetBtn.disabled=false;}
  };
 
  s.onclick=()=>{
